@@ -161,6 +161,10 @@ pub struct TypeGround {
 }
 
 impl TypeGround {
+    pub fn get_tag(&self) -> TypeVar {
+        self.tag.clone()
+    }
+
     pub fn get_param(&self, name: &str) -> Option<Type> {
         match &self.inner {
             TypeGroundInner::KV(kv) => kv.get(name).cloned(),
@@ -244,7 +248,7 @@ impl std::fmt::Display for TypeImpl {
 }
 
 #[derive(Eq, PartialEq, Clone, Hash)]
-pub struct Type(Arc<TypeImpl>);
+pub struct Type(pub Arc<TypeImpl>);
 
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -288,7 +292,19 @@ impl TypeUnify for Option<Type> {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref DENORM_LUT: Mutex<HashMap<TypeVar, Vec<(Type, Type)>>> = Mutex::new(HashMap::new());
+}
+
 impl Type {
+    pub fn like_var(&self) -> Option<TypeVar> {
+        match &*self.0 {
+            TypeImpl::Ground(g) => Some(g.get_tag()),
+            TypeImpl::Var(v) => Some(v.clone()),
+            _ => None
+        }
+    }
+
     pub fn any() -> Self {
         Self::from(TypeImpl::Any)
     }
@@ -308,9 +324,9 @@ impl Type {
     /// can be used for named type arguments, and structs
     ///
     /// if there are no arguments, this simplifies to [Self::var]
-    pub fn ground_kv<'a, I: Iterator<Item = (&'a str, Type)>>(tag: &TypeVar, from: I) -> Self {
+    pub fn ground_kv<'a, S: AsRef<str>, I: Iterator<Item = (S, Type)>>(tag: &TypeVar, from: I) -> Self {
         let inner: HashMap<_,_> = from
-            .map(|(k,v)| (String::from(k), v))
+            .map(|(k,v)| (k.as_ref().to_string(), v))
             .collect();
 
         if inner.is_empty() {
@@ -364,11 +380,141 @@ impl Type {
         tand.optimize()
     }
 
+    pub(crate) fn denorm_add( /* from TVar or TGround */ ty: TypeVar, requires: Type, implies: Type) {
+        DENORM_LUT.lock().unwrap()
+            .entry(ty)
+            .or_insert(Vec::new())
+            .push((requires, implies));
+    }
+
+    fn denorm_options(&self) -> Vec<(Type, Type)> {
+        match &*self.0 {
+            TypeImpl::Var(v) => {
+                DENORM_LUT.lock().unwrap()
+                    .get(v)
+                    .cloned()
+                    .unwrap_or(Vec::new())
+            }
+
+            TypeImpl::Ground(g) => {
+                DENORM_LUT.lock().unwrap()
+                    .get(&g.get_tag())
+                    .cloned()
+                    .unwrap_or(Vec::new())
+            }
+
+            TypeImpl::And(a) => {
+                a.get_all()
+                    .flat_map(|x| x.denorm_options().into_iter())
+                    .collect()
+            }
+
+            _ => vec!()
+        }
+    }
+
+    fn denormx_arr<Pair,
+        I: Iterator<Item = Pair>,
+        TyFromPair: Fn(&Pair) -> Type,
+        TyToPair: Fn(Pair, Type) -> Pair,
+        F: Fn() -> I>
+    (
+        ty_from_pair: TyFromPair,
+        to_pair: TyToPair,
+        func: F
+    ) -> Option<Vec<Pair>>
+    {
+        let mut new: Option<Vec<Pair>> = None;
+        for (idx, item) in func().enumerate() {
+            let (anew, ch) = ty_from_pair(&item).denormx();
+            if ch || new.is_some() {
+                if let Some(new) = &mut new {
+                    new[idx] = to_pair(item, anew);
+                } else {
+                    let mut v = func().collect::<Vec<_>>();
+                    v[idx] = to_pair(item, anew);
+                    new = Some(v);
+                }
+            }
+        }
+        new
+    }
+
+    fn denormx(&self) -> (Self, bool) {
+        let mut out = self.clone();
+
+        let mut anychanged = false;
+
+        loop {
+            let mut changed = false;
+            // denorm inner
+            match &*self.0 {
+                TypeImpl::Any |
+                TypeImpl::Var(_) |
+                TypeImpl::NumList(_) => (),
+                
+                TypeImpl::And(a) => {
+                    let new = Self::denormx_arr(
+                        |x:&Type| x.clone(),
+                        |_,x| x,
+                        || a.get_all());
+
+                    if let Some(new) = new {
+                        out = Type(Arc::new(TypeImpl::And(TypeAnd { conjugate: new })));
+                        changed = true;
+                    }
+                }
+
+                TypeImpl::Ground(g) => {
+                    let new = Self::denormx_arr(
+                        |x:&(String,Type)| x.1.clone(),
+                        |old,ty| (old.0,ty),
+                        || g.get_params().into_iter());
+
+                    if let Some(new) = new {
+                        out = Type::ground_kv(&g.get_tag(), new.into_iter());
+                        changed = true;
+                    }
+                }
+            }
+            for (req, implies) in self.denorm_options() {
+                if self.fast_matches(&req) {
+                    out = Type::and_pair(&out, &implies);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+            anychanged = true;
+        }
+
+        (out, anychanged)
+    }
+
     /// applies all "implies" statements from all dialects to all inner types.
     pub fn denorm(&self) -> Self {
-        // TODO
-        // dialects that own eithet the left side or the right side type of a implies, can create implies
-        self.clone()
+        self.denormx().0
+    }
+
+    pub(crate) fn to_var_list(&self) -> Vec<TypeVar> {
+        match &*self.0 {
+            TypeImpl::Any => vec!(),
+            TypeImpl::Var(v) => vec!(v.clone()),
+            TypeImpl::NumList(_) => vec!(),
+            TypeImpl::Ground(g) => vec!(g.get_tag()),
+            TypeImpl::And(a) => a.get_all().flat_map(|x| x.to_var_list().into_iter()).collect()
+        }
+    }
+
+    pub fn approx_expressiveness(&self) -> usize {
+        match &*self.0 {
+            TypeImpl::Any => 0,
+            TypeImpl::Var(_) => 1,
+            TypeImpl::NumList(_) => 2,
+            TypeImpl::And(and) => and.get_all().map(|x| x.approx_expressiveness()).sum(),
+            TypeImpl::Ground(_) => 5,
+        }
     }
 
     /// does this type have all types from the other type?
@@ -446,7 +592,7 @@ mod tests {
 
     #[test]
     fn test_simple_unify() {
-        let test_dialect = DialectBuilder::new("test");
+        let mut test_dialect = DialectBuilder::new("test");
         let ty_i8 = Type::var(&test_dialect.add_type("I8"));
         let ty_num = Type::var(&test_dialect.add_type("Number"));
         let ty_uint = Type::var(&test_dialect.add_type("UInt"));

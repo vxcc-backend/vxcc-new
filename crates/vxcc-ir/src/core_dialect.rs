@@ -8,7 +8,7 @@ pub struct CoreDialect {
 }
 
 fn create() -> CoreDialect {
-    let builder = DialectBuilder::new("core");
+    let mut builder = DialectBuilder::new("core");
 
     let clone = builder.add_type("Clone");
     let drop = builder.add_type("Drop");

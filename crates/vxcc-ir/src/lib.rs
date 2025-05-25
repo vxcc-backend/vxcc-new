@@ -61,6 +61,16 @@ pub enum IrError {
         ty: types::Type,
         ctx: NoDebug<In>,
     },
+
+    #[error("Right hand side of implies expression is not legal: `{rhs}`")]
+    ImpliesRhsIsNotLegal {
+        rhs: types::Type,
+    },
+
+    #[error("Left hand side of implies expression is not legal: `{lhs}`")]
+    ImpliesLhsIsNotLegal {
+        lhs: types::Type,
+    }
 }
 
 pub struct DialectRegistry {
@@ -110,13 +120,43 @@ impl DialectBuilder {
         DialectOwner { dialect: self.0 }
     }
 
-    pub fn add_type(&self, name: &str) -> types::TypeVar {
+    pub fn add_type(&mut self, name: &str) -> types::TypeVar {
         let t = types::TypeVar::new(types::TypeVarImpl {
             dialect: self.0.clone(),
             name: name.to_string()
         });
         self.0.types.lock().unwrap().borrow_mut().insert(name.to_string(), t.clone());
         t
+    }
+
+    /// in the future, implies have to have types you own on one of the sides
+    ///
+    /// the right side can only be Var or Ground
+    pub fn add_implies(&mut self, from: types::Type, to: types::Type) -> Result<(), IrError> {
+        match &*to.0 {
+            types::TypeImpl::Any |
+            types::TypeImpl::And(_) |
+            types::TypeImpl::NumList(_) => {
+                Err(IrError::ImpliesRhsIsNotLegal {
+                    rhs: to.clone()
+                })?;
+            },
+
+            _ => {}
+        }
+
+        let varlist = from.to_var_list();
+        if varlist.is_empty() {
+            Err(IrError::ImpliesLhsIsNotLegal {
+                lhs: from.clone()
+            })?;
+        }
+
+        for item in varlist.into_iter() {
+            types::Type::denorm_add(item, from.clone(), to.clone());
+        }
+
+        Ok(())
     }
 }
 
