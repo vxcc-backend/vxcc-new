@@ -33,7 +33,9 @@ pub struct TypeAnd {
 
 impl std::fmt::Display for TypeAnd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut any = false;
         for (idx, x) in self.get_all().enumerate() {
+            any = true;
             if idx > 0 {
                 write!(f, " + ")?;
             }
@@ -48,6 +50,9 @@ impl std::fmt::Display for TypeAnd {
 
                 TypeImpl::And(_) => write!(f, "({})", x)?,
             }
+        }
+        if !any {
+            write!(f, "()")?;
         }
         Ok(())
     }
@@ -80,13 +85,15 @@ impl<I: Iterator<Item = Type>> From<I> for TypeAnd {
 
                 TypeImpl::Ground(g) => {
                     let ptr = conjugate.iter()
-                        .filter_map(|x| match &*x.0 {
+                        .map(|x| match &*x.0 {
                             TypeImpl::Ground(g) => Some(g),
                             _ => None,
                         })
-                        .find_position(|xg| xg.tag == g.tag);
+                        .find_position(|xg| xg.is_some_and(|xg| xg.tag == g.tag));
 
                     if let Some((idx, xg)) = ptr {
+                        let xg = xg.unwrap();
+
                         let tag = &g.tag;
                         let g = g.get_params();
                         let xg = xg.get_params();
@@ -192,7 +199,7 @@ impl TypeGround {
 
 impl std::fmt::Display for TypeGround {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}{{", self.tag)?;
+        write!(f, "{} {{", self.tag)?;
         for (idx, (key, val)) in self.get_params().into_iter().enumerate() {
             if idx > 0 {
                 write!(f, ", ")?;
@@ -249,7 +256,7 @@ impl std::fmt::Display for TypeImpl {
             TypeImpl::And(inner) => write!(f, "{}", inner),
             TypeImpl::Ground(inner) => write!(f, "{}", inner),
             TypeImpl::NumList(inner) => write!(f, "{}", inner),
-            TypeImpl::Unspec(inner) => write!(f, "{}", inner),
+            TypeImpl::Unspec(inner) => write!(f, "?{}", inner),
         }
     }
 }
@@ -322,6 +329,13 @@ impl Type {
             TypeImpl::Ground(g) => Some(g.get_tag()),
             TypeImpl::Var(v) => Some(v.clone()),
             _ => None
+        }
+    }
+
+    pub fn like_and(&self) -> Vec<Type> {
+        match &*self.0 {
+            TypeImpl::And(g) => g.get_all().collect(),
+            _ => vec!(self.clone())
         }
     }
 
@@ -446,40 +460,49 @@ impl Type {
 
         loop {
             let mut changed = false;
-            // denorm inner
-            match &*out.0 {
-                TypeImpl::Any |
-                TypeImpl::Var(_) |
-                TypeImpl::Unspec(_) |
-                TypeImpl::And(_) |
-                TypeImpl::NumList(_) => (),
 
-                TypeImpl::Ground(g) => {
-                    let mut new: Option<Vec<_>> = None;
-                    for (idx, item) in g.get_params().into_iter().enumerate() {
-                        let (anew, ch) = item.1.denormx()?;
-                        if ch || new.is_some() {
-                            if let Some(new) = &mut new {
-                                new[idx] = (item.0, anew);
-                            } else {
-                                let mut v = g.get_params().into_iter().collect::<Vec<_>>();
-                                v[idx] = (item.0, anew);
-                                new = Some(v);
+            let mut new_cases = Vec::new();
+            for case in out.like_and().into_iter() {
+                let mut out = case.clone();
+                match &*case.0 {
+                    TypeImpl::Any |
+                    TypeImpl::Var(_) |
+                    TypeImpl::Unspec(_) |
+                    TypeImpl::NumList(_) => (),
+
+                    TypeImpl::And(_) => panic!(),
+
+                    TypeImpl::Ground(g) => {
+                        let mut new: Option<Vec<_>> = None;
+                        for (idx, item) in g.get_params().into_iter().enumerate() {
+                            let (anew, ch) = item.1.denormx()?;
+                            if ch || new.is_some() {
+                                if let Some(new) = &mut new {
+                                    new[idx] = (item.0, anew);
+                                } else {
+                                    let mut v = g.get_params().into_iter().collect::<Vec<_>>();
+                                    v[idx] = (item.0, anew);
+                                    new = Some(v);
+                                }
                             }
                         }
-                    }
 
-                    if let Some(new) = new {
-                        out = Type::ground_kv(&g.get_tag(), new.into_iter());
-                        changed = true;
+                        if let Some(new) = new {
+                            out = Type::ground_kv(&g.get_tag(), new.into_iter());
+                            changed = true;
+                        }
                     }
                 }
+                new_cases.push(out);
             }
+            out = Type::and(new_cases.into_iter());
+
             for (req, implies) in self.denorm_options() {
                 let mut map = HashMap::new();
                 if self.fast_matches(&req, &mut map) {
                     let old_out = out;
-                    out = Type::and_pair(&old_out, &implies.expand_unspec(map)?);
+                    let implied = implies.expand_unspec(&map)?;
+                    out = Type::and_pair(&old_out, &implied);
 
                     let mut thefuckisthis = HashMap::new();
                     if !old_out.fast_matches(&out, &mut thefuckisthis) {
@@ -501,12 +524,21 @@ impl Type {
         self.denormx().map(|x| x.0)
     }
 
-    pub fn expand_unspec(self, map: HashMap<Cow<str>, Type>) -> Result<Type, TypeError> {
-        if let Some(v) = self.is_unspecified() {
-            let repl = map.get(v).ok_or(TypeError::NotAllTemplatesExpanded)?;
-            Ok(repl.clone())
-        } else {
-            Ok(self)
+    pub fn expand_unspec(self, map: &HashMap<Cow<str>, Type>) -> Result<Type, TypeError> {
+        match &*self.0 {
+            TypeImpl::Unspec(v) =>
+                Ok(map.get(v.as_str()).ok_or(TypeError::NotAllTemplatesExpanded)?.clone()),
+
+            TypeImpl::And(a) =>
+                Ok(Type::and(a.get_all().map(|x| x.expand_unspec(map)).flatten())),
+
+            TypeImpl::Ground(g) =>
+                Ok(Type::ground_kv(&g.get_tag(), g.get_params()
+                        .iter()
+                        .map(|(k,v)| v.clone().expand_unspec(map).map(|x| (k.as_str(), x)))
+                        .flatten())),
+
+            _ => Ok(self)
         }
     }
 
@@ -713,10 +745,15 @@ mod tests {
                 &clone,
                 &Type::ground_kv(&vector, [("elt", Type::and_pair(&t, &clone))].into_iter()),
             ),
+            Type::ground_kv(&iterable, [("elt", t.clone())].into_iter()),
+        ).unwrap();
+
+        builder.add_implies(
             Type::and_pair(
-                &Type::ground_kv(&iterable, [("elt", t.clone())].into_iter()),
-                &idfk,
+                &clone,
+                &Type::ground_kv(&vector, [("elt", Type::and_pair(&t, &clone))].into_iter()),
             ),
+            idfk.clone(),
         ).unwrap();
 
         let u64 = Type::var(&builder.add_type("U64"));
