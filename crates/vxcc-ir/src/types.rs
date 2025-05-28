@@ -793,20 +793,27 @@ mod tests {
     }
 
     #[test]
-    fn test_denorm_wildcard_match() {
+    fn test_denorm_ground_with_wildcard_implies_trait() {
         let mut builder = DialectBuilder::new("test");
 
         let marker = Type::var(&builder.add_type("Marker"));
-
-        builder.add_implies(Type::any(), marker.clone()).unwrap();
-
+        let wrapper = builder.add_type("Wrapper");
         let u64 = Type::var(&builder.add_type("U64"));
+
+        // Wrapper{inner: ?} implies Marker
+        builder.add_implies(
+            Type::ground_kv(&wrapper, [("inner", Type::any())].into_iter()),
+            marker.clone(),
+        ).unwrap();
+
         let _ = builder.build();
 
-        let denormed = u64.denorm().unwrap();
+        let wrapped_u64 = Type::ground_kv(&wrapper, [("inner", u64.clone())].into_iter());
+        let denormed = wrapped_u64.denorm().unwrap();
 
         assert!(denormed.matches(&marker).unwrap());
-        assert!(denormed.matches(&u64).unwrap());
+        assert!(denormed.matches(&wrapped_u64).unwrap());
+        assert!(!u64.matches(&marker).unwrap()); // not a match unless wrapped
     }
 
     #[test]
@@ -983,5 +990,150 @@ mod tests {
 
         assert!(denormed.matches(&expected_iter).unwrap());
         assert!(denormed.matches(&abstract_vec).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_nested_box_box_to_flattened() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let box_ = builder.add_type("Box");
+        let flattened = Type::var(&builder.add_type("Flattened"));
+
+        // Box{val: Box{val: t}} implies Flattened
+        builder.add_implies(
+            Type::ground_kv(&box_, [(
+                "val",
+                Type::ground_kv(&box_, [("val", t.clone())].into_iter())
+            )].into_iter()),
+            flattened.clone(),
+        ).unwrap();
+
+        let u64 = Type::var(&builder.add_type("U64"));
+
+        let _ = builder.build();
+
+        let nested_box = Type::ground_kv(&box_, [(
+            "val",
+            Type::ground_kv(&box_, [("val", u64.clone())].into_iter())
+        )].into_iter());
+
+        let denormed = nested_box.denorm().unwrap();
+
+        assert!(denormed.matches(&flattened).unwrap());
+        assert!(denormed.matches(&nested_box).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_deeply_nested_composite_to_trait() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let option = builder.add_type("Option");
+        let result = builder.add_type("Result");
+        let clone = Type::var(&builder.add_type("Clone"));
+
+        // Option{val: Result{ok: t, err: t}} implies Clone
+        builder.add_implies(
+            Type::ground_kv(&option, [(
+                "val",
+                Type::ground_kv(&result, [
+                    ("ok", t.clone()),
+                    ("err", t.clone())
+                ].into_iter())
+            )].into_iter()),
+            clone.clone(),
+        ).unwrap();
+
+        let str_ = Type::var(&builder.add_type("Str"));
+
+        let _ = builder.build();
+
+        let nested = Type::ground_kv(&option, [(
+            "val",
+            Type::ground_kv(&result, [
+                ("ok", str_.clone()),
+                ("err", str_.clone())
+            ].into_iter())
+        )].into_iter());
+
+        let denormed = nested.denorm().unwrap();
+
+        assert!(denormed.matches(&clone).unwrap());
+        assert!(denormed.matches(&nested).unwrap());
+        assert!(!str_.matches(&clone).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_recursive_wrapper() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let wrapper = builder.add_type("Wrapper");
+        let marker = Type::var(&builder.add_type("Marked"));
+
+        // Wrapper{inner: Wrapper{inner: t}} implies Marked
+        builder.add_implies(
+            Type::ground_kv(&wrapper, [(
+                "inner",
+                Type::ground_kv(&wrapper, [("inner", t.clone())].into_iter())
+            )].into_iter()),
+            marker.clone(),
+        ).unwrap();
+
+        let bool_ = Type::var(&builder.add_type("Bool"));
+
+        let _ = builder.build();
+
+        let nested = Type::ground_kv(&wrapper, [(
+            "inner",
+            Type::ground_kv(&wrapper, [("inner", bool_.clone())].into_iter())
+        )].into_iter());
+
+        let denormed = nested.denorm().unwrap();
+
+        assert!(denormed.matches(&marker).unwrap());
+        assert!(denormed.matches(&nested).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_nested_generic_with_propagation() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let outer = builder.add_type("Outer");
+        let inner = builder.add_type("Inner");
+        let access = builder.add_type("Access");
+
+        // Inner{val: t} implies Access{target: t}
+        builder.add_implies(
+            Type::ground_kv(&inner, [("val", t.clone())].into_iter()),
+            Type::ground_kv(&access, [("target", t.clone())].into_iter()),
+        ).unwrap();
+
+        // Outer{inner: Inner{val: t}} implies Access{target: t}
+        builder.add_implies(
+            Type::ground_kv(&outer, [(
+                "inner",
+                Type::ground_kv(&inner, [("val", t.clone())].into_iter())
+            )].into_iter()),
+            Type::ground_kv(&access, [("target", t.clone())].into_iter()),
+        ).unwrap();
+
+        let i8 = Type::var(&builder.add_type("I8"));
+
+        let _ = builder.build();
+
+        let composed = Type::ground_kv(&outer, [(
+            "inner",
+            Type::ground_kv(&inner, [("val", i8.clone())].into_iter())
+        )].into_iter());
+
+        let expected = Type::ground_kv(&access, [("target", i8.clone())].into_iter());
+
+        let denormed = composed.denorm().unwrap();
+
+        assert!(denormed.matches(&expected).unwrap());
+        assert!(denormed.matches(&composed).unwrap());
     }
 }
