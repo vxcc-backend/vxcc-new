@@ -42,6 +42,7 @@ impl std::fmt::Display for TypeAnd {
             match *x.0 {
                 TypeImpl::Any        |
                 TypeImpl::Var(_)     |
+                TypeImpl::Unspec(_)  |
                 TypeImpl::NumList(_) |
                 TypeImpl::Ground(_) => write!(f, "{}", x)?,
 
@@ -61,7 +62,8 @@ impl<I: Iterator<Item = Type>> From<I> for TypeAnd {
 
         let mut add = |item: Type| {
             match &*item.0 {
-                TypeImpl::Any => {},
+                TypeImpl::Any |
+                TypeImpl::Unspec(_) => {},
 
                 TypeImpl::Var(v) => {
                     if !conjugate.iter().any(|x| match &*x.0 {
@@ -235,6 +237,8 @@ pub enum TypeImpl {
     Ground(TypeGround),
 
     NumList(TypeNumList),
+
+    Unspec(String),
 }
 
 impl std::fmt::Display for TypeImpl {
@@ -245,6 +249,7 @@ impl std::fmt::Display for TypeImpl {
             TypeImpl::And(inner) => write!(f, "{}", inner),
             TypeImpl::Ground(inner) => write!(f, "{}", inner),
             TypeImpl::NumList(inner) => write!(f, "{}", inner),
+            TypeImpl::Unspec(inner) => write!(f, "{}", inner),
         }
     }
 }
@@ -307,14 +312,7 @@ pub enum TypeError {
 impl Type {
     pub fn is_unspecified(&self) -> Option<&str> {
         match &*self.0 {
-            TypeImpl::Var(v) => {
-                let name = v.get_name();
-                if name.chars().all(|x| x.is_lowercase() || x.is_digit(10) || x == '_' || x == '-') {
-                    Some(name)
-                } else {
-                    None
-                }
-            }
+            TypeImpl::Unspec(v) => Some(v.as_str()),
             _ => None
         }
     }
@@ -335,6 +333,10 @@ impl Type {
         Self::from(TypeImpl::Var(name.clone()))
     }
 
+    pub fn unspec(name: &str) -> Self {
+        Self::from(TypeImpl::Unspec(name.to_string()))
+    }
+
     pub fn and<I: Iterator<Item = Type>>(from: I) -> Self {
         Self::from(TypeImpl::And(TypeAnd::from(from)))
     }
@@ -342,6 +344,8 @@ impl Type {
     pub fn and_pair(&self, b: &Self) -> Self {
         Self::and([self.clone(), b.clone()].into_iter())
     }
+
+    // TODO: instead require type arguments to be registered!
 
     /// can be used for named type arguments, and structs
     ///
@@ -435,33 +439,6 @@ impl Type {
         }
     }
 
-    fn denormx_arr<Pair,
-        I: Iterator<Item = Pair>,
-        TyFromPair: Fn(&Pair) -> Type,
-        TyToPair: Fn(Pair, Type) -> Pair,
-        F: Fn() -> I>
-    (
-        ty_from_pair: TyFromPair,
-        to_pair: TyToPair,
-        func: F
-    ) -> Result<Option<Vec<Pair>>, TypeError>
-    {
-        let mut new: Option<Vec<Pair>> = None;
-        for (idx, item) in func().enumerate() {
-            let (anew, ch) = ty_from_pair(&item).denormx()?;
-            if ch || new.is_some() {
-                if let Some(new) = &mut new {
-                    new[idx] = to_pair(item, anew);
-                } else {
-                    let mut v = func().collect::<Vec<_>>();
-                    v[idx] = to_pair(item, anew);
-                    new = Some(v);
-                }
-            }
-        }
-        Ok(new)
-    }
-
     fn denormx(&self) -> Result<(Self, bool), TypeError> {
         let mut out = self.clone();
 
@@ -470,28 +447,27 @@ impl Type {
         loop {
             let mut changed = false;
             // denorm inner
-            match &*self.0 {
+            match &*out.0 {
                 TypeImpl::Any |
                 TypeImpl::Var(_) |
+                TypeImpl::Unspec(_) |
+                TypeImpl::And(_) |
                 TypeImpl::NumList(_) => (),
-                
-                TypeImpl::And(a) => {
-                    let new = Self::denormx_arr(
-                        |x:&Type| x.clone(),
-                        |_,x| x,
-                        || a.get_all())?;
-
-                    if let Some(new) = new {
-                        out = Type(Arc::new(TypeImpl::And(TypeAnd { conjugate: new })));
-                        changed = true;
-                    }
-                }
 
                 TypeImpl::Ground(g) => {
-                    let new = Self::denormx_arr(
-                        |x:&(String,Type)| x.1.clone(),
-                        |old,ty| (old.0,ty),
-                        || g.get_params().into_iter())?;
+                    let mut new: Option<Vec<_>> = None;
+                    for (idx, item) in g.get_params().into_iter().enumerate() {
+                        let (anew, ch) = item.1.denormx()?;
+                        if ch || new.is_some() {
+                            if let Some(new) = &mut new {
+                                new[idx] = (item.0, anew);
+                            } else {
+                                let mut v = g.get_params().into_iter().collect::<Vec<_>>();
+                                v[idx] = (item.0, anew);
+                                new = Some(v);
+                            }
+                        }
+                    }
 
                     if let Some(new) = new {
                         out = Type::ground_kv(&g.get_tag(), new.into_iter());
@@ -502,8 +478,13 @@ impl Type {
             for (req, implies) in self.denorm_options() {
                 let mut map = HashMap::new();
                 if self.fast_matches(&req, &mut map) {
-                    out = Type::and_pair(&out, &implies.expand_unspec(map)?);
-                    changed = true;
+                    let old_out = out;
+                    out = Type::and_pair(&old_out, &implies.expand_unspec(map)?);
+
+                    let mut thefuckisthis = HashMap::new();
+                    if !old_out.fast_matches(&out, &mut thefuckisthis) {
+                        changed = true;
+                    }
                 }
             }
             if !changed {
@@ -534,6 +515,7 @@ impl Type {
             TypeImpl::Any => vec!(),
             TypeImpl::Var(v) => vec!(v.clone()),
             TypeImpl::NumList(_) => vec!(),
+            TypeImpl::Unspec(_) => vec!(),
             TypeImpl::Ground(g) => vec!(g.get_tag()),
             TypeImpl::And(a) => a.get_all().flat_map(|x| x.to_var_list().into_iter()).collect()
         }
@@ -544,6 +526,7 @@ impl Type {
             TypeImpl::Any => 0,
             TypeImpl::Var(_) => 1,
             TypeImpl::NumList(_) => 2,
+            TypeImpl::Unspec(_) => 2,
             TypeImpl::And(and) => and.get_all().map(|x| x.approx_expressiveness()).sum(),
             TypeImpl::Ground(_) => 5,
         }
@@ -577,13 +560,13 @@ impl Type {
             true
         }
 
-        if let Some(v) = other.is_unspecified() {
-            out.insert(v.to_string().into(), self.clone());
-            return true
-        }
-
         match &*other.0 {
             TypeImpl::Any => true,
+
+            TypeImpl::Unspec(v) => {
+                out.insert(v.to_string().into(), self.clone());
+                true
+            }
 
             TypeImpl::Var(var) => match &*self.0 {
                 TypeImpl::Var(x) => *var == *x,
@@ -645,4 +628,111 @@ mod tests {
         assert!(!uni.matches(&Type::var(&core_dialect::DIALECT.clone)).unwrap());
         assert!(!ty_i8.matches(&ty_num).unwrap());
     }
+
+    #[test]
+    fn test_denorm_and_implies_clone() {
+        let mut builder = DialectBuilder::new("test");
+
+        let clone = Type::var(&builder.add_type("Clone"));
+        let num = Type::var(&builder.add_type("Num"));
+        let u64 = Type::var(&builder.add_type("U64"));
+
+        builder.add_implies(
+            u64.clone(),
+            clone.clone(),
+        ).unwrap();
+
+        let _ = builder.build();
+
+        let orig = Type::and_pair(&num, &u64);
+        let denormed = orig.denorm().unwrap();
+
+        assert!(denormed.matches(&clone).unwrap());
+        assert!(denormed.matches(&orig).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_vector_implies_clone() {
+        let mut builder = DialectBuilder::new("test");
+
+        let clone = Type::var(&builder.add_type("Clone"));
+        let vector = builder.add_type("Vector");
+        let u64 = Type::var(&builder.add_type("U64"));
+
+        builder.add_implies(
+            Type::ground_kv(&vector, [("elt", Type::any())].into_iter()),
+            clone.clone(),
+        ).unwrap();
+
+        let _ = builder.build();
+
+        let vec_u64 = Type::ground_kv(&vector, [("elt", u64.clone())].into_iter());
+        let denormed = vec_u64.denorm().unwrap();
+
+        assert!(denormed.matches(&clone).unwrap());
+        assert!(denormed.matches(&vec_u64).unwrap());
+        assert!(!clone.matches(&vec_u64).unwrap()); // Non-symmetric
+    }
+
+    #[test]
+    fn test_denorm_template_preserves_parameter() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let vector = builder.add_type("Vector");
+        let iterable = builder.add_type("Iterable");
+
+        builder.add_implies(
+            Type::ground_kv(&vector, [("elt", t.clone())].into_iter()),
+            Type::ground_kv(&iterable, [("elt", t.clone())].into_iter()),
+        ).unwrap();
+
+        let u64 = Type::var(&builder.add_type("U64"));
+        let _ = builder.build();
+
+        let vec_u64 = Type::ground_kv(&vector, [("elt", u64.clone())].into_iter());
+        let iter_u64 = Type::ground_kv(&iterable, [("elt", u64.clone())].into_iter());
+
+        let denormed = vec_u64.denorm().unwrap();
+        assert!(denormed.matches(&iter_u64).unwrap());
+        assert!(denormed.matches(&vec_u64).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_complex_intersection_rule() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let clone = Type::var(&builder.add_type("Clone"));
+        let idfk = Type::var(&builder.add_type("Idfk"));
+        let vector = builder.add_type("Vector");
+        let iterable = builder.add_type("Iterable");
+
+        builder.add_implies(
+            Type::and_pair(
+                &clone,
+                &Type::ground_kv(&vector, [("elt", Type::and_pair(&t, &clone))].into_iter()),
+            ),
+            Type::and_pair(
+                &Type::ground_kv(&iterable, [("elt", t.clone())].into_iter()),
+                &idfk,
+            ),
+        ).unwrap();
+
+        let u64 = Type::var(&builder.add_type("U64"));
+        let _ = builder.build();
+
+        let input = Type::and_pair(
+            &clone,
+            &Type::ground_kv(&vector, [("elt", Type::and_pair(&u64, &clone))].into_iter()),
+        );
+
+        let iter_u64 = Type::ground_kv(&iterable, [("elt", u64.clone())].into_iter());
+        let denormed = input.denorm().unwrap();
+
+        assert!(denormed.matches(&iter_u64).unwrap());
+        assert!(denormed.matches(&idfk).unwrap());
+        assert!(denormed.matches(&input).unwrap());
+    }
+
 }
