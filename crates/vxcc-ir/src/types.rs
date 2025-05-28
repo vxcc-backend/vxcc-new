@@ -363,14 +363,14 @@ impl Type {
 
     /// can be used for named type arguments, and structs
     ///
-    /// if there are no arguments, this simplifies to [Self::var]
+    /// if there are no arguments, this panics!
     pub fn ground_kv<'a, S: AsRef<str>, I: Iterator<Item = (S, Type)>>(tag: &TypeVar, from: I) -> Self {
         let inner: HashMap<_,_> = from
             .map(|(k,v)| (k.as_ref().to_string(), v))
             .collect();
 
         if inner.is_empty() {
-            Self::var(tag)
+            panic!("ground args are empty");
         } else {
             Self::from(TypeImpl::Ground(TypeGround {
                 tag: tag.clone(),
@@ -530,13 +530,17 @@ impl Type {
                 Ok(map.get(v.as_str()).ok_or(TypeError::NotAllTemplatesExpanded)?.clone()),
 
             TypeImpl::And(a) =>
-                Ok(Type::and(a.get_all().map(|x| x.expand_unspec(map)).flatten())),
+                Ok(Type::and(a.get_all()
+                        .map(|x| x.expand_unspec(map))
+                        .collect::<Result<Vec<_>,_>>()?
+                        .into_iter())),
 
             TypeImpl::Ground(g) =>
                 Ok(Type::ground_kv(&g.get_tag(), g.get_params()
                         .iter()
                         .map(|(k,v)| v.clone().expand_unspec(map).map(|x| (k.as_str(), x)))
-                        .flatten())),
+                        .collect::<Result<Vec<_>,_>>()?
+                        .into_iter())),
 
             _ => Ok(self)
         }
@@ -767,6 +771,7 @@ mod tests {
         let iter_u64 = Type::ground_kv(&iterable, [("elt", u64.clone())].into_iter());
         let denormed = input.denorm().unwrap();
 
+        println!("{}", denormed);
         assert!(denormed.matches(&iter_u64).unwrap());
         assert!(denormed.matches(&idfk).unwrap());
         assert!(denormed.matches(&input).unwrap());
