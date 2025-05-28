@@ -70,7 +70,10 @@ pub enum IrError {
     #[error("Left hand side of implies expression is not legal: `{lhs}`")]
     ImpliesLhsIsNotLegal {
         lhs: types::Type,
-    }
+    },
+
+    #[error(transparent)]
+    TypeError(#[from] types::TypeError)
 }
 
 pub struct DialectRegistry {
@@ -461,7 +464,7 @@ impl Out {
         self.get_node().ensure_inferred()?;
         let self_ty = self.get_type()?;
         if self.find_reference_ports().count() > 0 {
-            if !self_ty.matches(&types::Type::var(&core_dialect::DIALECT.clone)) {
+            if !self_ty.matches(&types::Type::var(&core_dialect::DIALECT.clone))? {
                 Err(IrError::DoesNotImplementClone {
                     ty: self_ty.clone(),
                     ctx: NoDebug(self.get_node())
@@ -469,7 +472,7 @@ impl Out {
             }
         }
         let target_expected_type = rhs.get_type();
-        if !self_ty.matches(&target_expected_type) {
+        if !self_ty.matches(&target_expected_type)? {
             Err(IrError::CannotConnectBetweenMismatchingTypes {
                 from: NoDebug(self.clone()),
                 to: NoDebug(rhs.clone()),
@@ -517,7 +520,7 @@ impl In {
 
     /// this errors if the type doesn't implement Drop
     pub fn disconnect(&self) -> Result<(), IrError> {
-        if !self.get_type().matches(&types::Type::var(&core_dialect::DIALECT.drop)) {
+        if !self.get_type().matches(&types::Type::var(&core_dialect::DIALECT.drop))? {
             Err(IrError::DoesNotImplementDrop {
                 ty: self.get_type(),
                 ctx: NoDebug(self.clone()),

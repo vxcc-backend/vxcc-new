@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::*;
 
 #[derive(Eq, PartialEq, Hash)]
@@ -296,7 +298,27 @@ lazy_static::lazy_static! {
     static ref DENORM_LUT: Mutex<HashMap<TypeVar, Vec<(Type, Type)>>> = Mutex::new(HashMap::new());
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum TypeError {
+    #[error("not all templates could be expanded in implies expression")]
+    NotAllTemplatesExpanded,
+}
+
 impl Type {
+    pub fn is_unspecified(&self) -> Option<&str> {
+        match &*self.0 {
+            TypeImpl::Var(v) => {
+                let name = v.get_name();
+                if name.chars().all(|x| x.is_lowercase() || x.is_digit(10) || x == '_' || x == '-') {
+                    Some(name)
+                } else {
+                    None
+                }
+            }
+            _ => None
+        }
+    }
+
     pub fn like_var(&self) -> Option<TypeVar> {
         match &*self.0 {
             TypeImpl::Ground(g) => Some(g.get_tag()),
@@ -422,11 +444,11 @@ impl Type {
         ty_from_pair: TyFromPair,
         to_pair: TyToPair,
         func: F
-    ) -> Option<Vec<Pair>>
+    ) -> Result<Option<Vec<Pair>>, TypeError>
     {
         let mut new: Option<Vec<Pair>> = None;
         for (idx, item) in func().enumerate() {
-            let (anew, ch) = ty_from_pair(&item).denormx();
+            let (anew, ch) = ty_from_pair(&item).denormx()?;
             if ch || new.is_some() {
                 if let Some(new) = &mut new {
                     new[idx] = to_pair(item, anew);
@@ -437,10 +459,10 @@ impl Type {
                 }
             }
         }
-        new
+        Ok(new)
     }
 
-    fn denormx(&self) -> (Self, bool) {
+    fn denormx(&self) -> Result<(Self, bool), TypeError> {
         let mut out = self.clone();
 
         let mut anychanged = false;
@@ -457,7 +479,7 @@ impl Type {
                     let new = Self::denormx_arr(
                         |x:&Type| x.clone(),
                         |_,x| x,
-                        || a.get_all());
+                        || a.get_all())?;
 
                     if let Some(new) = new {
                         out = Type(Arc::new(TypeImpl::And(TypeAnd { conjugate: new })));
@@ -469,7 +491,7 @@ impl Type {
                     let new = Self::denormx_arr(
                         |x:&(String,Type)| x.1.clone(),
                         |old,ty| (old.0,ty),
-                        || g.get_params().into_iter());
+                        || g.get_params().into_iter())?;
 
                     if let Some(new) = new {
                         out = Type::ground_kv(&g.get_tag(), new.into_iter());
@@ -478,8 +500,9 @@ impl Type {
                 }
             }
             for (req, implies) in self.denorm_options() {
-                if self.fast_matches(&req) {
-                    out = Type::and_pair(&out, &implies);
+                let mut map = HashMap::new();
+                if self.fast_matches(&req, &mut map) {
+                    out = Type::and_pair(&out, &implies.expand_unspec(map)?);
                     changed = true;
                 }
             }
@@ -489,12 +512,21 @@ impl Type {
             anychanged = true;
         }
 
-        (out, anychanged)
+        Ok((out, anychanged))
     }
 
     /// applies all "implies" statements from all dialects to all inner types.
-    pub fn denorm(&self) -> Self {
-        self.denormx().0
+    pub fn denorm(&self) -> Result<Self, TypeError> {
+        self.denormx().map(|x| x.0)
+    }
+
+    pub fn expand_unspec(self, map: HashMap<Cow<str>, Type>) -> Result<Type, TypeError> {
+        if let Some(v) = self.is_unspecified() {
+            let repl = map.get(v).ok_or(TypeError::NotAllTemplatesExpanded)?;
+            Ok(repl.clone())
+        } else {
+            Ok(self)
+        }
     }
 
     pub(crate) fn to_var_list(&self) -> Vec<TypeVar> {
@@ -520,12 +552,13 @@ impl Type {
     /// does this type have all types from the other type?
     ///
     /// this calls [Self::denorm] first
-    pub fn matches(&self, other: &Self) -> bool {
-        self.denorm().fast_matches(other)
+    pub fn matches(&self, other: &Self) -> Result<bool, TypeError> {
+        let mut map = HashMap::new();
+        Ok(self.denorm()?.fast_matches(other, &mut map))
     }
 
-    fn fast_matches(&self, other: &Self) -> bool {
-        fn match_ground(this: &TypeGround, other: &TypeGround) -> bool {
+    fn fast_matches(&self, other: &Self, out: &mut HashMap<Cow<str>, Type>) -> bool {
+        fn match_ground(this: &TypeGround, other: &TypeGround, out: &mut HashMap<Cow<str>, Type>) -> bool {
             if this.tag != other.tag {
                 return false;
             }
@@ -533,7 +566,7 @@ impl Type {
             for (k,v) in other.get_params().into_iter() {
                 let tv = this.get_param(k.as_str());
                 if let Some(tv) = tv {
-                    if !tv.fast_matches(&v) {
+                    if !tv.fast_matches(&v, out) {
                         return false;
                     }
                 } else {
@@ -544,30 +577,35 @@ impl Type {
             true
         }
 
+        if let Some(v) = other.is_unspecified() {
+            out.insert(v.to_string().into(), self.clone());
+            return true
+        }
+
         match &*other.0 {
             TypeImpl::Any => true,
 
             TypeImpl::Var(var) => match &*self.0 {
                 TypeImpl::Var(x) => *var == *x,
-                TypeImpl::And(x) => x.get_all().any(|x| x.fast_matches(other)),
+                TypeImpl::And(x) => x.get_all().any(|x| x.fast_matches(other, out)),
                 _ => false
             }
 
             TypeImpl::And(and) => {
-                and.get_all().all(|x| self.fast_matches(&x))
+                and.get_all().all(|x| self.fast_matches(&x, out))
             }
 
             TypeImpl::Ground(ground) => {
                 match &*self.0 {
                     TypeImpl::Ground(x) => {
-                        match_ground(x, ground)
+                        match_ground(x, ground, out)
                     }
 
                     TypeImpl::And(and) => {
                         and.get_all()
                             .any(|item| match &*item.0 {
                                 TypeImpl::Ground(x) => {
-                                    match_ground(x, ground)
+                                    match_ground(x, ground, out)
                                 }
 
                                 _ => false,
@@ -599,12 +637,12 @@ mod tests {
         let _test_dialect = test_dialect.build().get_dialect();
 
         let uni = Type::and_pair(&ty_i8, &ty_num).unify(&ty_uint);
-        assert!(uni.matches(&Type::and_pair(&Type::and_pair(&ty_i8, &ty_uint), &ty_num)));
-        assert!(uni.matches(&ty_i8));
-        assert!(uni.matches(&ty_num));
-        assert!(uni.matches(&ty_uint));
-        assert!(uni.matches(&Type::and_pair(&ty_uint, &ty_num)));
-        assert!(!uni.matches(&Type::var(&core_dialect::DIALECT.clone)));
-        assert!(!ty_i8.matches(&ty_num));
+        assert!(uni.matches(&Type::and_pair(&Type::and_pair(&ty_i8, &ty_uint), &ty_num)).unwrap());
+        assert!(uni.matches(&ty_i8).unwrap());
+        assert!(uni.matches(&ty_num).unwrap());
+        assert!(uni.matches(&ty_uint).unwrap());
+        assert!(uni.matches(&Type::and_pair(&ty_uint, &ty_num)).unwrap());
+        assert!(!uni.matches(&Type::var(&core_dialect::DIALECT.clone)).unwrap());
+        assert!(!ty_i8.matches(&ty_num).unwrap());
     }
 }
