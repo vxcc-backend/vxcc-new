@@ -772,4 +772,216 @@ mod tests {
         assert!(denormed.matches(&input).unwrap());
     }
 
+    #[test]
+    fn test_denorm_chained_implications() {
+        let mut builder = DialectBuilder::new("test");
+
+        let a = Type::var(&builder.add_type("A"));
+        let b = Type::var(&builder.add_type("B"));
+        let c = Type::var(&builder.add_type("C"));
+
+        builder.add_implies(a.clone(), b.clone()).unwrap();
+        builder.add_implies(b.clone(), c.clone()).unwrap();
+
+        let _ = builder.build();
+
+        let denormed = a.denorm().unwrap();
+
+        assert!(denormed.matches(&b).unwrap());
+        assert!(denormed.matches(&c).unwrap());
+        assert!(denormed.matches(&a).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_wildcard_match() {
+        let mut builder = DialectBuilder::new("test");
+
+        let marker = Type::var(&builder.add_type("Marker"));
+
+        builder.add_implies(Type::any(), marker.clone()).unwrap();
+
+        let u64 = Type::var(&builder.add_type("U64"));
+        let _ = builder.build();
+
+        let denormed = u64.denorm().unwrap();
+
+        assert!(denormed.matches(&marker).unwrap());
+        assert!(denormed.matches(&u64).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_irrelevant_implication() {
+        let mut builder = DialectBuilder::new("test");
+
+        let unrelated = Type::var(&builder.add_type("Unrelated"));
+        let target = Type::var(&builder.add_type("Target"));
+        let dummy = Type::var(&builder.add_type("Dummy"));
+
+        // Dummy implies Unrelated
+        builder.add_implies(dummy.clone(), unrelated.clone()).unwrap();
+
+        let _ = builder.build();
+
+        let denormed = target.denorm().unwrap();
+
+        assert!(!denormed.matches(&unrelated).unwrap());
+        assert!(denormed.matches(&target).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_identity_preserved() {
+        let mut builder = DialectBuilder::new("test");
+
+        let a = Type::var(&builder.add_type("A"));
+
+        let _ = builder.build();
+
+        let denormed = a.denorm().unwrap();
+
+        assert!(denormed.matches(&a).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_multiple_matching_rules() {
+        let mut builder = DialectBuilder::new("test");
+
+        let base = Type::var(&builder.add_type("Base"));
+        let trait1 = Type::var(&builder.add_type("Trait1"));
+        let trait2 = Type::var(&builder.add_type("Trait2"));
+
+        builder.add_implies(base.clone(), trait1.clone()).unwrap();
+        builder.add_implies(base.clone(), trait2.clone()).unwrap();
+
+        let _ = builder.build();
+
+        let denormed = base.denorm().unwrap();
+
+        assert!(denormed.matches(&trait1).unwrap());
+        assert!(denormed.matches(&trait2).unwrap());
+        assert!(denormed.matches(&base).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_recursive_generic_chain() {
+        let mut builder = DialectBuilder::new("test");
+
+        let box_ = builder.add_type("Box");
+        let printable = Type::var(&builder.add_type("Printable"));
+
+        // Box{val: t} implies Printable if t is Printable
+        builder.add_implies(
+            Type::ground_kv(&box_, [("val", printable.clone())].into_iter()),
+            printable.clone(),
+        ).unwrap();
+
+        let u64 = Type::var(&builder.add_type("U64"));
+        builder.add_implies(u64.clone(), printable.clone()).unwrap();
+
+        let _ = builder.build();
+
+        let boxed_u64 = Type::ground_kv(&box_, [("val", u64.clone())].into_iter());
+
+        let denormed = boxed_u64.denorm().unwrap();
+        assert!(denormed.matches(&printable).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_multiple_ground_fields() {
+        let mut builder = DialectBuilder::new("test");
+
+        let k = Type::unspec("k");
+        let v = Type::unspec("v");
+        let map = builder.add_type("Map");
+        let iterable = builder.add_type("Iterable");
+
+        // Map{key: k, val: v} implies Iterable{elt: v}
+        builder.add_implies(
+            Type::ground_kv(&map, [("key", k.clone()), ("val", v.clone())].into_iter()),
+            Type::ground_kv(&iterable, [("elt", v.clone())].into_iter()),
+        ).unwrap();
+
+        let str_ = Type::var(&builder.add_type("Str"));
+        let num = Type::var(&builder.add_type("Num"));
+
+        let _ = builder.build();
+
+        let map_type = Type::ground_kv(&map, [("key", str_.clone()), ("val", num.clone())].into_iter());
+        let expected_iter = Type::ground_kv(&iterable, [("elt", num.clone())].into_iter());
+
+        let denormed = map_type.denorm().unwrap();
+        assert!(denormed.matches(&expected_iter).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_redundant_implication() {
+        let mut builder = DialectBuilder::new("test");
+
+        let foo = Type::var(&builder.add_type("Foo"));
+        let bar = Type::var(&builder.add_type("Bar"));
+
+        builder.add_implies(foo.clone(), bar.clone()).unwrap();
+        builder.add_implies(foo.clone(), bar.clone()).unwrap(); // duplicated rule
+
+        let _ = builder.build();
+
+        let denormed = foo.denorm().unwrap();
+        assert!(denormed.matches(&bar).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_multiple_unspec_nested() {
+        let mut builder = DialectBuilder::new("test");
+
+        let k = Type::unspec("k");
+        let v = Type::unspec("v");
+        let list = builder.add_type("List");
+        let dict = builder.add_type("Dict");
+        let flattens_to = builder.add_type("FlatList");
+
+        // Dict{key: k, val: List{elt: v}} implies FlatList{elt: v}
+        builder.add_implies(
+            Type::ground_kv(&dict, [("key", k.clone()), ("val", Type::ground_kv(&list, [("elt", v.clone())].into_iter()))].into_iter()),
+            Type::ground_kv(&flattens_to, [("elt", v.clone())].into_iter()),
+        ).unwrap();
+
+        let str_ = Type::var(&builder.add_type("Str"));
+        let num = Type::var(&builder.add_type("Num"));
+
+        let _ = builder.build();
+
+        let nested = Type::ground_kv(&dict, [
+            ("key", str_.clone()),
+            ("val", Type::ground_kv(&list, [("elt", num.clone())].into_iter()))
+        ].into_iter());
+
+        let expected = Type::ground_kv(&flattens_to, [("elt", num.clone())].into_iter());
+
+        let denormed = nested.denorm().unwrap();
+        assert!(denormed.matches(&expected).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_unspec_passthrough() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let vec = builder.add_type("Vec");
+        let iter = builder.add_type("Iterable");
+
+        // Vec{elt: t} implies Iterable{elt: t}
+        builder.add_implies(
+            Type::ground_kv(&vec, [("elt", t.clone())].into_iter()),
+            Type::ground_kv(&iter, [("elt", t.clone())].into_iter()),
+        ).unwrap();
+
+        let _ = builder.build();
+
+        let abstract_vec = Type::ground_kv(&vec, [("elt", t.clone())].into_iter());
+        let expected_iter = Type::ground_kv(&iter, [("elt", t.clone())].into_iter());
+
+        let denormed = abstract_vec.denorm().unwrap();
+
+        assert!(denormed.matches(&expected_iter).unwrap());
+        assert!(denormed.matches(&abstract_vec).unwrap());
+    }
 }
