@@ -24,6 +24,18 @@ impl TypeVarImpl {
     }
 }
 
+#[cfg(feature = "quote")]
+impl quote::ToTokens for TypeVarImpl {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        use quote::quote;
+
+        let dia = self.get_dialect();
+        let dia = dia.as_ref();
+        let ty = self.get_name();
+        tokens.extend(quote! { #dia.find_type(#ty).unwrap() });
+    }
+}
+
 pub type TypeVar = Arc<TypeVarImpl>;
 
 #[derive(Eq, PartialEq, Hash)]
@@ -67,8 +79,13 @@ impl<I: Iterator<Item = Type>> From<I> for TypeAnd {
 
         let mut add = |item: Type| {
             match &*item.0 {
-                TypeImpl::Any |
-                TypeImpl::Unspec(_) => {},
+                TypeImpl::Any => {}
+
+                TypeImpl::Unspec(_) => {
+                    if !conjugate.contains(&item) {
+                        conjugate.push(item);
+                    }
+                }
 
                 TypeImpl::Var(v) => {
                     if !conjugate.iter().any(|x| match &*x.0 {
@@ -264,6 +281,51 @@ impl std::fmt::Display for TypeImpl {
 #[derive(Eq, PartialEq, Clone, Hash)]
 pub struct Type(pub Arc<TypeImpl>);
 
+#[cfg(feature = "quote")]
+impl quote::ToTokens for Type {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        use quote::quote;
+
+        tokens.extend(match &*self.0 {
+            TypeImpl::Any => quote! { vxcc_ir::types::Type::any() },
+
+            TypeImpl::Var(type_var_impl) => {
+                let name = type_var_impl.as_ref();
+                quote! { vxcc_ir::types::Type::var(#name) }
+            }
+
+            TypeImpl::And(inner) => {
+                let inner = inner.get_all()
+                    .flat_map(|x| quote! { #x, })
+                    .collect::<proc_macro2::TokenStream>();
+
+                quote! { vxcc_ir::types::Type::and([#inner].into_iter()) }
+            }
+
+            TypeImpl::Ground(g) => {
+                let name = g.get_tag();
+                let name = name.as_ref();
+
+                let keys = g.get_params()
+                    .into_iter()
+                    .flat_map(|(l,r)| quote! { (#l,#r), })
+                    .collect::<proc_macro2::TokenStream>();
+
+                quote! { vxcc_ir::types::Type::ground_kv(#name, [#keys].into_iter()) }
+            }
+
+            TypeImpl::NumList(type_num_list) => {
+                let inner = type_num_list.get_elements()
+                    .flat_map(|x| quote! { #x , })
+                    .collect::<proc_macro2::TokenStream>();
+                quote! { vxcc_ir::types::Type::num_list([#inner].into_iter()) }
+            }
+
+            TypeImpl::Unspec(v) => quote! { vxcc_ir::types::Type::unspec(#v) },
+        })
+    }
+}
+
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -317,22 +379,7 @@ pub enum TypeError {
 }
 
 impl Type {
-    pub fn is_unspecified(&self) -> Option<&str> {
-        match &*self.0 {
-            TypeImpl::Unspec(v) => Some(v.as_str()),
-            _ => None
-        }
-    }
-
-    pub fn like_var(&self) -> Option<TypeVar> {
-        match &*self.0 {
-            TypeImpl::Ground(g) => Some(g.get_tag()),
-            TypeImpl::Var(v) => Some(v.clone()),
-            _ => None
-        }
-    }
-
-    pub fn like_and(&self) -> Vec<Type> {
+    fn like_and(&self) -> Vec<Type> {
         match &*self.0 {
             TypeImpl::And(g) => g.get_all().collect(),
             _ => vec!(self.clone())
@@ -502,6 +549,7 @@ impl Type {
                 if self.fast_matches(&req, &mut map) {
                     let old_out = out;
                     let implied = implies.expand_unspec(&map)?;
+                    println!("{old_out} => {implied}");
                     out = Type::and_pair(&old_out, &implied);
 
                     let mut thefuckisthis = HashMap::new();
@@ -527,7 +575,10 @@ impl Type {
     pub fn expand_unspec(self, map: &HashMap<Cow<str>, Type>) -> Result<Type, TypeError> {
         match &*self.0 {
             TypeImpl::Unspec(v) =>
-                Ok(map.get(v.as_str()).ok_or(TypeError::NotAllTemplatesExpanded)?.clone()),
+                Ok(map.get(v.as_str())
+                    .ok_or(TypeError::NotAllTemplatesExpanded)?
+                    .clone()
+                    .expand_unspec(map)?),
 
             TypeImpl::And(a) =>
                 Ok(Type::and(a.get_all()
@@ -611,7 +662,24 @@ impl Type {
             }
 
             TypeImpl::And(and) => {
-                and.get_all().all(|x| self.fast_matches(&x, out))
+                // TODO: only yield after success
+                if and.get_all().all(|x| self.fast_matches(&x, out)) {
+                    for x in and.get_all() {
+                        match &*x.0 {
+                            TypeImpl::Unspec(u) => {
+                                out.insert(u.clone().into(),
+                                    Type::and(and.get_all()
+                                        .filter(|x| match &*x.0 { TypeImpl::Unspec(_) => false, _ => true })));
+                            }
+
+                            _ => {}
+                        }
+                    }
+                    true
+                }
+                else {
+                    false
+                }
             }
 
             TypeImpl::Ground(ground) => {
@@ -774,6 +842,153 @@ mod tests {
         println!("{}", denormed);
         assert!(denormed.matches(&iter_u64).unwrap());
         assert!(denormed.matches(&idfk).unwrap());
+        assert!(denormed.matches(&input).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_wrapper_clone_composite_implies() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let clone = Type::var(&builder.add_type("Clone"));
+        let serializable = Type::var(&builder.add_type("Serializable"));
+        let debuggable = Type::var(&builder.add_type("Debuggable"));
+        let wrapper = builder.add_type("Wrapper");
+
+        let lhs = Type::and_pair(
+            &clone,
+            &Type::ground_kv(&wrapper, [("inner", Type::and_pair(&t, &clone))].into_iter()),
+        );
+
+        builder.add_implies(
+            lhs.clone(),
+            serializable.clone(),
+        ).unwrap();
+
+        builder.add_implies(
+            lhs,
+            debuggable.clone(),
+        ).unwrap();
+
+        let str_ = Type::var(&builder.add_type("Str"));
+        let _ = builder.build();
+
+        let input = Type::and_pair(
+            &clone,
+            &Type::ground_kv(&wrapper, [("inner", Type::and_pair(&str_, &clone))].into_iter()),
+        );
+
+        let denormed = input.denorm().unwrap();
+
+        println!("{}", denormed);
+        assert!(denormed.matches(&serializable).unwrap());
+        assert!(denormed.matches(&debuggable).unwrap());
+        assert!(denormed.matches(&input).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_box_readable_to_decodable() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let readable = Type::var(&builder.add_type("Readable"));
+        let decodable = Type::var(&builder.add_type("Decodable"));
+        let box_ = builder.add_type("Box");
+
+        builder.add_implies(
+            Type::and_pair(
+                &readable,
+                &Type::ground_kv(&box_, [("val", Type::and_pair(&t, &readable))].into_iter()),
+            ),
+            decodable.clone(),
+        ).unwrap();
+
+        let data = Type::var(&builder.add_type("Data"));
+        let _ = builder.build();
+
+        let input = Type::and_pair(
+            &readable,
+            &Type::ground_kv(&box_, [("val", Type::and_pair(&data, &readable))].into_iter()),
+        );
+
+        let denormed = input.denorm().unwrap();
+
+        println!("{}", denormed);
+        assert!(denormed.matches(&decodable).unwrap());
+        assert!(denormed.matches(&input).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_map_equatable_to_setlike() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let u = Type::unspec("u");
+        let equatable = Type::var(&builder.add_type("Equatable"));
+        let setlike = builder.add_type("SetLike");
+        let map = builder.add_type("Map");
+
+        builder.add_implies(
+            Type::and_pair(
+                &equatable,
+                &Type::ground_kv(&map, [
+                    ("key", Type::and_pair(&t, &equatable)),
+                    ("val", u.clone()),
+                ].into_iter()),
+            ),
+            Type::ground_kv(&setlike, [("item", t.clone())].into_iter()),
+        ).unwrap();
+
+        let str_ = Type::var(&builder.add_type("Str"));
+        let bool_ = Type::var(&builder.add_type("Bool"));
+        let _ = builder.build();
+
+        let input = Type::and_pair(
+            &equatable,
+            &Type::ground_kv(&map, [
+                ("key", Type::and_pair(&str_, &equatable)),
+                ("val", bool_),
+            ].into_iter()),
+        );
+
+        let expected = Type::ground_kv(&setlike, [("item", str_.clone())].into_iter());
+        let denormed = input.denorm().unwrap();
+
+        println!("{}", denormed);
+        assert!(denormed.matches(&expected).unwrap());
+        assert!(denormed.matches(&input).unwrap());
+    }
+
+    #[test]
+    fn test_denorm_buffered_stream_conversion() {
+        let mut builder = DialectBuilder::new("test");
+
+        let t = Type::unspec("t");
+        let stream = Type::var(&builder.add_type("Stream"));
+        let buffered_stream = builder.add_type("BufferedStream");
+        let buffer = builder.add_type("Buffer");
+
+        builder.add_implies(
+            Type::and_pair(
+                &stream,
+                &Type::ground_kv(&buffer, [("source", Type::and_pair(&t, &stream))].into_iter()),
+            ),
+            Type::ground_kv(&buffered_stream, [("base", t.clone())].into_iter()),
+        ).unwrap();
+
+        let socket = Type::var(&builder.add_type("Socket"));
+        let _ = builder.build();
+
+        let input = Type::and_pair(
+            &stream,
+            &Type::ground_kv(&buffer, [("source", Type::and_pair(&socket, &stream))].into_iter()),
+        );
+
+        let expected = Type::ground_kv(&buffered_stream, [("base", socket.clone())].into_iter());
+        let denormed = input.denorm().unwrap();
+
+        println!("{}", denormed);
+        assert!(denormed.matches(&expected).unwrap());
         assert!(denormed.matches(&input).unwrap());
     }
 
@@ -973,7 +1188,7 @@ mod tests {
     }
 
     #[test]
-    fn test_denorm_unspec_passthrough() {
+    fn test_denorm_unspec_invalid() {
         let mut builder = DialectBuilder::new("test");
 
         let t = Type::unspec("t");
@@ -989,12 +1204,8 @@ mod tests {
         let _ = builder.build();
 
         let abstract_vec = Type::ground_kv(&vec, [("elt", t.clone())].into_iter());
-        let expected_iter = Type::ground_kv(&iter, [("elt", t.clone())].into_iter());
 
-        let denormed = abstract_vec.denorm().unwrap();
-
-        assert!(denormed.matches(&expected_iter).unwrap());
-        assert!(denormed.matches(&abstract_vec).unwrap());
+        let _ = abstract_vec.denorm().unwrap_err();
     }
 
     #[test]

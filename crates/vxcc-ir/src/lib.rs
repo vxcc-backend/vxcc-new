@@ -212,6 +212,16 @@ impl DialectOwner {
     }
 }
 
+#[cfg(feature = "quote")]
+impl quote::ToTokens for Dialect {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        use quote::quote;
+
+        let name = self.get_name();
+        tokens.extend(quote! { vxcc_ir::DialectRegistry::get().get_dialect(#name).unwrap() })
+    }
+}
+
 pub type DialectRef = Arc<Dialect>;
 
 pub struct NodeOutTypeInferRes {
