@@ -376,6 +376,9 @@ lazy_static::lazy_static! {
 pub enum TypeError {
     #[error("not all templates could be expanded in implies expression")]
     NotAllTemplatesExpanded,
+
+    #[error("type templates are only allowed on the right hand side (in implies)")]
+    LeftHandSideUnspecNotAllowed
 }
 
 impl Type {
@@ -501,6 +504,11 @@ impl Type {
     }
 
     fn denormx(&self) -> Result<(Self, bool), TypeError> {
+        match &*self.0 {
+            TypeImpl::Unspec(_) => Err(TypeError::LeftHandSideUnspecNotAllowed)?,
+            _ => {}
+        }
+
         let mut out = self.clone();
 
         let mut anychanged = false;
@@ -634,8 +642,6 @@ impl Type {
                 return false;
             }
 
-            println!("matching {this} onto {other}");
-
             for (k,v) in other.get_params().into_iter() {
                 let tv = this.get_param(k.as_str());
                 if let Some(tv) = tv {
@@ -647,8 +653,6 @@ impl Type {
                     return false;
                 }
             }
-
-            println!("pass: {:#?}", out);
 
             true
         }
