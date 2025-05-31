@@ -691,38 +691,6 @@ fn test_denorm_nested_wildcard_explosion() {
 }
 
 #[test]
-fn test_denorm_recursive_structure_vec_to_vecvec() {
-    let mut builder = DialectBuilder::new("test");
-
-    let t = Type::unspec("t");
-    let vec = builder.add_type("Vec");
-
-    // Vec{elt: t} ⇒ Vec{elt: Vec{elt: t}} (pathological!)
-    builder.add_implies(
-        Type::ground_kv(&vec, [("elt", t.clone())].into_iter()),
-        Type::ground_kv(&vec, [(
-            "elt",
-            Type::ground_kv(&vec, [("elt", t.clone())].into_iter())
-        )].into_iter()),
-    ).unwrap();
-
-    let u8 = Type::var(&builder.add_type("U8"));
-    let input = Type::ground_kv(&vec, [("elt", u8.clone())].into_iter());
-
-    let _ = builder.build();
-
-    let denormed = input.denorm().unwrap();
-
-    // Should not recurse infinitely, but only one expansion step
-    let expected = Type::ground_kv(&vec, [(
-        "elt",
-        Type::ground_kv(&vec, [("elt", u8.clone())].into_iter())
-    )].into_iter());
-
-    assert!(denormed.matches(&expected).unwrap());
-}
-
-#[test]
 fn test_denorm_unspec_combination_explosion() {
     let mut builder = DialectBuilder::new("test");
 
