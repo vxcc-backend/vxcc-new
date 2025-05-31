@@ -548,6 +548,7 @@ impl Type {
                 let mut map = HashMap::new();
                 if self.fast_matches(&req, &mut map) {
                     let old_out = out;
+                    println!("{:#?}", map);
                     let implied = implies.expand_unspec(&map)?;
                     println!("{old_out} => {implied}");
                     out = Type::and_pair(&old_out, &implied);
@@ -633,9 +634,12 @@ impl Type {
                 return false;
             }
 
+            println!("matching {this} onto {other}");
+
             for (k,v) in other.get_params().into_iter() {
                 let tv = this.get_param(k.as_str());
                 if let Some(tv) = tv {
+                    println!("  {tv} onto {v}");
                     if !tv.fast_matches(&v, out) {
                         return false;
                     }
@@ -644,14 +648,16 @@ impl Type {
                 }
             }
 
+            println!("pass: {:#?}", out);
+
             true
         }
 
         match &*other.0 {
             TypeImpl::Any => true,
 
-            TypeImpl::Unspec(v) => {
-                out.insert(v.to_string().into(), self.clone());
+            TypeImpl::Unspec(u) => {
+                out.insert(u.clone().into(), self.clone());
                 true
             }
 
@@ -662,14 +668,11 @@ impl Type {
             }
 
             TypeImpl::And(and) => {
-                // TODO: only yield after success
-                if and.get_all().all(|x| self.fast_matches(&x, out)) {
+                if and.get_all().all(|x| match &*x.0 { TypeImpl::Unspec(_) => true, _ => self.fast_matches(&x, out) }) {
                     for x in and.get_all() {
                         match &*x.0 {
                             TypeImpl::Unspec(u) => {
-                                out.insert(u.clone().into(),
-                                    Type::and(and.get_all()
-                                        .filter(|x| match &*x.0 { TypeImpl::Unspec(_) => false, _ => true })));
+                                out.insert(u.clone().into(), self.clone());
                             }
 
                             _ => {}
@@ -683,24 +686,15 @@ impl Type {
             }
 
             TypeImpl::Ground(ground) => {
-                match &*self.0 {
-                    TypeImpl::Ground(x) => {
-                        match_ground(x, ground, out)
-                    }
+                self.like_and()
+                    .into_iter()
+                    .any(|item| match &*item.0 {
+                        TypeImpl::Ground(x) => {
+                            match_ground(x, ground, out)
+                        }
 
-                    TypeImpl::And(and) => {
-                        and.get_all()
-                            .any(|item| match &*item.0 {
-                                TypeImpl::Ground(x) => {
-                                    match_ground(x, ground, out)
-                                }
-
-                                _ => false,
-                            })
-                    }
-
-                    _ => false
-                }
+                        _ => false,
+                    })
             }
 
             TypeImpl::NumList(numlist) => match &*self.0 {
