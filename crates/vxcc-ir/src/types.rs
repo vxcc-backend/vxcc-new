@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-
+use std::any::Any;
 use crate::*;
 
 #[derive(Eq, PartialEq, Hash)]
@@ -24,6 +24,8 @@ impl TypeVarImpl {
     }
 }
 
+pub type TypeVar = Arc<TypeVarImpl>;
+
 #[cfg(feature = "quote")]
 impl quote::ToTokens for TypeVarImpl {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
@@ -36,7 +38,26 @@ impl quote::ToTokens for TypeVarImpl {
     }
 }
 
-pub type TypeVar = Arc<TypeVarImpl>;
+pub trait CustomTypeError: std::fmt::Display + std::fmt::Debug {};
+
+/// the Eq trait does not need to match, and instead only checks strict equaity.
+pub trait CustomTypeInner: std::fmt::Display + Eq + PartialEq + Hash {
+    fn unify(self, other: &Self) -> Result<Self, Box<dyn CustomTypeError>>;
+
+    fn matches(self, other: &Self) -> bool;
+}
+
+#[derive(Eq, PartialEq, Hash)]
+pub struct CustomType {
+    var: TypeVar,
+    inner: Any<dyn CustomTypeInner>,
+}
+
+impl std::fmt::Display for CustomType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}({})", self.get_name(), self.get_inner())
+    }
+}
 
 #[derive(Eq, PartialEq, Hash)]
 pub struct TypeAnd {
@@ -260,7 +281,7 @@ pub enum TypeImpl {
 
     Ground(TypeGround),
 
-    NumList(TypeNumList),
+    Custom(CustomType),
 
     Unspec(String),
 }
@@ -372,13 +393,37 @@ lazy_static::lazy_static! {
     static ref DENORM_LUT: Mutex<HashMap<TypeVar, Vec<(Type, Type)>>> = Mutex::new(HashMap::new());
 }
 
+#[derive(Debug)]
+pub struct CustomTypeErrorWrapper {
+    tyname: TypeVar,
+    err: Box<dyn CustomTypeError>
+};
+
+impl CustomTypeErrorWrapper {
+    fn new(inner: Box<dyn CustomTypeError>, tyname: TypeVar) -> Self {
+        CustomTypeErrorWrapper {
+            tyname,
+            err: inner
+        }
+    }
+}
+
+impl std::fmt::Display for CustomTypeErrorWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Error while handeling {}: {}", self.tyname, self.err)
+    }
+};
+
 #[derive(Debug, thiserror::Error)]
 pub enum TypeError {
     #[error("not all templates could be expanded in implies expression")]
     NotAllTemplatesExpanded,
 
     #[error("type templates are only allowed on the right hand side (in implies)")]
-    LeftHandSideUnspecNotAllowed
+    LeftHandSideUnspecNotAllowed,
+
+    #[transparent]
+    Custom(#[from] CustomTypeErrorWrapper)
 }
 
 impl Type {
