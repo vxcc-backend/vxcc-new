@@ -118,7 +118,7 @@ impl TryQuote for CustomType {
 
 impl PartialEq for CustomType {
     fn eq(&self, other: &Self) -> bool {
-        self.var == other.var
+        self.matches(other)
     }
 }
 
@@ -775,6 +775,10 @@ impl Type {
     ///
     /// this calls [Self::denorm] first
     pub fn matches(&self, other: &Self) -> Result<bool, TypeError> {
+        if self == other {
+            return Ok(true)
+        }
+
         let mut map = HashMap::new();
         Ok(self.denorm()?.fast_matches(other, &mut map))
     }
