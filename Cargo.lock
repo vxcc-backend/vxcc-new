@@ -33,6 +33,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "quid"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12ce5ce61020363d54b965b6064f6d5352a41c59375d923bbbe11cc864a37b64"
+
+[[package]]
 name = "quote"
 version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -91,6 +97,7 @@ dependencies = [
  "itertools",
  "lazy_static",
  "proc-macro2",
+ "quid",
  "quote",
  "thiserror",
  "tinyvec",

@@ -9,8 +9,8 @@ pub mod core_dialect;
 mod types_tests;
 
 type NodePortVecIdx = u8;
-pub type NodeUID = u64;
-type NodeTypeUID = u32;
+pub type NodeUID = quid::UID;
+type NodeTypeUID = quid::UID;
 
 pub const MAX_NODE_INPUTS: usize = 16;
 pub const MAX_NODE_OUTPUTS: usize = 8;
@@ -47,10 +47,16 @@ pub enum IrError {
         ctx: NoDebug<Node>,
     },
 
-    #[error("the given key `{key}` does not exist in the node outputs")]
+    #[error("the given key `{key}` does not exist in outputs of {ctx}")]
     NodeOutputNotFound {
         key: String,
-        ctx: NoDebug<Node>,
+        ctx: NoDebug<NodeType>,
+    },
+
+    #[error("the given key `{key}` does not exist in inputs of {ctx}")]
+    NodeInputNotFound {
+        key: String,
+        ctx: NoDebug<NodeType>,
     },
 
     #[error("Tried to clone `{ty}` that doesn't implement `core.Clone`")]
@@ -243,8 +249,8 @@ impl NodeOutTypeInferRes {
         let idx = self.node.get_type()
             ._lookup_output(out)
             .ok_or(IrError::NodeOutputNotFound {
-                ctx: NoDebug(self.node.clone()),
-                key: out.to_string()
+                key: out.to_string(),
+                ctx: NoDebug(self.node.get_type().clone()),
             })?;
 
         self.node.0.borrow_mut().outputs[idx as usize].1 = Some(val);
@@ -279,6 +285,14 @@ impl NodeTypeImpl {
 
     pub fn get_name(&self) -> &str {
         self.name.as_str()
+    }
+
+    pub fn num_inputs(&self) -> usize {
+        self.input_lookup.len()
+    }
+
+    pub fn num_outputs(&self) -> usize {
+        self.output_lookup.len()
     }
 
     pub fn get_inputs(&self) -> impl Iterator<Item = &str> {
@@ -349,8 +363,35 @@ impl PartialEq for Node {
 }
 
 impl Node {
+    pub fn new<I, S>(ty: &NodeType, inputs: I) -> Result<Self, IrError>
+    where
+        I: Iterator<Item = (S, Out)>,
+        S: AsRef<str>
+    {
+        let mut ins = ArrayVec::new();
+        for _ in 0..ty.num_inputs() {
+            ins.push(None);
+        }
+
+        for (k,v) in inputs {
+            let idx = ty._lookup_input(k.as_ref()).ok_or(IrError::NodeInputNotFound {
+                key: k.as_ref().to_string(),
+                ctx: NoDebug(ty.clone()),
+            })?;
+            ins[idx as usize] = Some(v);
+        }
+
+        Ok(Self(Rc::new(RefCell::new(NodeImpl {
+            uid: NodeUID::new(),
+            typ: ty.clone(),
+            inputs: ins,
+            outputs: ArrayVec::new(),
+            inferred: false,
+        }))))
+    }
+
     pub fn get_uid(&self) -> NodeUID {
-        self.0.borrow().uid
+        self.0.borrow().uid.clone()
     }
 
     pub fn get_type(&self) -> NodeType {
