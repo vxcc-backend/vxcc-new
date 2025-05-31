@@ -5,6 +5,9 @@ use itertools::Itertools;
 pub mod types;
 pub mod core_dialect;
 
+#[cfg(test)]
+mod types_tests;
+
 type NodePortVecIdx = u8;
 pub type NodeUID = u64;
 type NodeTypeUID = u32;
