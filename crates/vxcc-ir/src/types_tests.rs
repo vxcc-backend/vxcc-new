@@ -8,12 +8,12 @@ fn test_simple_unify() {
     let ty_uint = Type::var(&test_dialect.add_type("UInt"));
     let _test_dialect = test_dialect.build().get_dialect();
 
-    let uni = Type::and_pair(&ty_i8, &ty_num).unify(&ty_uint);
-    assert!(uni.matches(&Type::and_pair(&Type::and_pair(&ty_i8, &ty_uint), &ty_num)).unwrap());
+    let uni = Type::and_pair(&ty_i8, &ty_num).unwrap().unify(&ty_uint).unwrap();
+    assert!(uni.matches(&Type::and_pair(&Type::and_pair(&ty_i8, &ty_uint).unwrap(), &ty_num).unwrap()).unwrap());
     assert!(uni.matches(&ty_i8).unwrap());
     assert!(uni.matches(&ty_num).unwrap());
     assert!(uni.matches(&ty_uint).unwrap());
-    assert!(uni.matches(&Type::and_pair(&ty_uint, &ty_num)).unwrap());
+    assert!(uni.matches(&Type::and_pair(&ty_uint, &ty_num).unwrap()).unwrap());
     assert!(!uni.matches(&Type::var(&core_dialect::DIALECT.clone)).unwrap());
     assert!(!ty_i8.matches(&ty_num).unwrap());
 }
@@ -33,7 +33,7 @@ fn test_denorm_and_implies_clone() {
 
     let _ = builder.build();
 
-    let orig = Type::and_pair(&num, &u64);
+    let orig = Type::and_pair(&num, &u64).unwrap();
     let denormed = orig.denorm().unwrap();
 
     assert!(denormed.matches(&clone).unwrap());
@@ -100,16 +100,16 @@ fn test_denorm_complex_intersection_rule() {
     builder.add_implies(
         Type::and_pair(
             &clone,
-            &Type::ground_kv(&vector, [("elt", Type::and_pair(&t, &clone))].into_iter()),
-        ),
+            &Type::ground_kv(&vector, [("elt", Type::and_pair(&t, &clone).unwrap())].into_iter()),
+        ).unwrap(),
         Type::ground_kv(&iterable, [("elt", t.clone())].into_iter()),
     ).unwrap();
 
     builder.add_implies(
         Type::and_pair(
             &clone,
-            &Type::ground_kv(&vector, [("elt", Type::and_pair(&t, &clone))].into_iter()),
-        ),
+            &Type::ground_kv(&vector, [("elt", Type::and_pair(&t, &clone).unwrap())].into_iter()),
+        ).unwrap(),
         idfk.clone(),
     ).unwrap();
 
@@ -118,8 +118,8 @@ fn test_denorm_complex_intersection_rule() {
 
     let input = Type::and_pair(
         &clone,
-        &Type::ground_kv(&vector, [("elt", Type::and_pair(&u64, &clone))].into_iter()),
-    );
+        &Type::ground_kv(&vector, [("elt", Type::and_pair(&u64, &clone).unwrap())].into_iter()),
+    ).unwrap();
 
     let iter_u64 = Type::ground_kv(&iterable, [("elt", u64.clone())].into_iter());
     let denormed = input.denorm().unwrap();
@@ -141,8 +141,8 @@ fn test_denorm_wrapper_clone_composite_implies() {
 
     let lhs = Type::and_pair(
         &clone,
-        &Type::ground_kv(&wrapper, [("inner", Type::and_pair(&t, &clone))].into_iter()),
-    );
+        &Type::ground_kv(&wrapper, [("inner", Type::and_pair(&t, &clone).unwrap())].into_iter()),
+    ).unwrap();
 
     builder.add_implies(
         lhs.clone(),
@@ -159,8 +159,8 @@ fn test_denorm_wrapper_clone_composite_implies() {
 
     let input = Type::and_pair(
         &clone,
-        &Type::ground_kv(&wrapper, [("inner", Type::and_pair(&str_, &clone))].into_iter()),
-    );
+        &Type::ground_kv(&wrapper, [("inner", Type::and_pair(&str_, &clone).unwrap())].into_iter()),
+    ).unwrap();
 
     let denormed = input.denorm().unwrap();
 
@@ -181,8 +181,8 @@ fn test_denorm_box_readable_to_decodable() {
     builder.add_implies(
         Type::and_pair(
             &readable,
-            &Type::ground_kv(&box_, [("val", Type::and_pair(&t, &readable))].into_iter()),
-        ),
+            &Type::ground_kv(&box_, [("val", Type::and_pair(&t, &readable).unwrap())].into_iter()),
+        ).unwrap(),
         decodable.clone(),
     ).unwrap();
 
@@ -191,8 +191,8 @@ fn test_denorm_box_readable_to_decodable() {
 
     let input = Type::and_pair(
         &readable,
-        &Type::ground_kv(&box_, [("val", Type::and_pair(&data, &readable))].into_iter()),
-    );
+        &Type::ground_kv(&box_, [("val", Type::and_pair(&data, &readable).unwrap())].into_iter()),
+    ).unwrap();
 
     let denormed = input.denorm().unwrap();
 
@@ -214,10 +214,10 @@ fn test_denorm_map_equatable_to_setlike() {
         Type::and_pair(
             &equatable,
             &Type::ground_kv(&map, [
-                ("key", Type::and_pair(&t, &equatable)),
+                ("key", Type::and_pair(&t, &equatable).unwrap()),
                 ("val", u.clone()),
             ].into_iter()),
-        ),
+        ).unwrap(),
         Type::ground_kv(&setlike, [("item", t.clone())].into_iter()),
     ).unwrap();
 
@@ -228,10 +228,10 @@ fn test_denorm_map_equatable_to_setlike() {
     let input = Type::and_pair(
         &equatable,
         &Type::ground_kv(&map, [
-            ("key", Type::and_pair(&str_, &equatable)),
+            ("key", Type::and_pair(&str_, &equatable).unwrap()),
             ("val", bool_),
         ].into_iter()),
-    );
+    ).unwrap();
 
     let expected = Type::ground_kv(&setlike, [("item", str_.clone())].into_iter());
     let denormed = input.denorm().unwrap();
@@ -252,8 +252,8 @@ fn test_denorm_buffered_stream_conversion() {
     builder.add_implies(
         Type::and_pair(
             &stream,
-            &Type::ground_kv(&buffer, [("source", Type::and_pair(&t, &stream))].into_iter()),
-        ),
+            &Type::ground_kv(&buffer, [("source", Type::and_pair(&t, &stream).unwrap())].into_iter()),
+        ).unwrap(),
         Type::ground_kv(&buffered_stream, [("base", t.clone())].into_iter()),
     ).unwrap();
 
@@ -262,8 +262,8 @@ fn test_denorm_buffered_stream_conversion() {
 
     let input = Type::and_pair(
         &stream,
-        &Type::ground_kv(&buffer, [("source", Type::and_pair(&socket, &stream))].into_iter()),
-    );
+        &Type::ground_kv(&buffer, [("source", Type::and_pair(&socket, &stream).unwrap())].into_iter()),
+    ).unwrap();
 
     let expected = Type::ground_kv(&buffered_stream, [("base", socket.clone())].into_iter());
     let denormed = input.denorm().unwrap();
@@ -731,14 +731,14 @@ fn test_denorm_intersection_recursive_loop() {
 
     // A + B ⇒ C
     builder.add_implies(
-        Type::and_pair(&a, &b),
+        Type::and_pair(&a, &b).unwrap(),
         c.clone(),
     ).unwrap();
 
     // C ⇒ A
     builder.add_implies(c.clone(), a.clone()).unwrap();
 
-    let input = Type::and_pair(&a, &b);
+    let input = Type::and_pair(&a, &b).unwrap();
 
     let _ = builder.build();
 

@@ -148,7 +148,6 @@ impl DialectBuilder {
         match &*to.0 {
             types::TypeImpl::Any |
             types::TypeImpl::And(_) |
-            types::TypeImpl::NumList(_) |
             types::TypeImpl::Unspec(_) => {
                 Err(IrError::ImpliesRhsIsNotLegal {
                     rhs: to.clone()

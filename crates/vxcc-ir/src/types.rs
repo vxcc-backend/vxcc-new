@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::any::Any;
+use std::hash::Hash;
 use crate::*;
 
 #[derive(Eq, PartialEq, Hash)]
@@ -11,6 +12,12 @@ pub struct TypeVarImpl {
 impl std::fmt::Display for TypeVarImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.{}", self.dialect.get_name(), self.get_name())
+    }
+}
+
+impl std::fmt::Debug for TypeVarImpl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
     }
 }
 
@@ -38,19 +45,123 @@ impl quote::ToTokens for TypeVarImpl {
     }
 }
 
-pub trait CustomTypeError: std::fmt::Display + std::fmt::Debug {};
-
-/// the Eq trait does not need to match, and instead only checks strict equaity.
-pub trait CustomTypeInner: std::fmt::Display + Eq + PartialEq + Hash {
-    fn unify(self, other: &Self) -> Result<Self, Box<dyn CustomTypeError>>;
-
-    fn matches(self, other: &Self) -> bool;
+pub trait TryQuote {
+    #[cfg(feature = "quote")]
+    fn try_quote(&self) -> Result<proc_macro2::TokenStream, ()> {
+        Err(())
+    }
 }
 
-#[derive(Eq, PartialEq, Hash)]
+#[cfg(feature = "quote")]
+impl<T: quote::ToTokens> TryQuote for T {
+    fn try_quote(&self) -> Result<proc_macro2::TokenStream, ()> {
+        let mut v = proc_macro2::TokenStream::new();
+        self.to_tokens(&mut v);
+        Ok(v)
+    }
+}
+
+pub trait CustomTypeError: std::fmt::Display + std::fmt::Debug {}
+
+/// the Eq trait does not need to match, and instead only checks strict equaity.
+pub trait CustomTypeInner: std::fmt::Display + Any + Send + Sync + TryQuote {
+    /// only ever gets called when the other side is the same impl
+    fn unify(&self, self_repr: &CustomType, other: &CustomType) -> Result<Type, Box<dyn CustomTypeError>>;
+
+    /// check if other is your type and then also check if this matches
+    fn matches(&self, self_repr: &CustomType, other: &CustomType) -> bool;
+
+    fn hash(&self, self_repr: &CustomType) -> u64;
+}
+
+pub trait SimpleCustomType: Sized + Hash + std::fmt::Display + Send + Sync + TryQuote {
+    type Error: Sized + CustomTypeError;
+
+    fn unify(&self, other: &Self) -> Result<Self, Self::Error>;
+    fn matches(&self, other: &Self) -> bool;
+}
+
+impl<T: 'static + SimpleCustomType> CustomTypeInner for T 
+{
+    fn unify(&self, self_repr: &CustomType, other: &CustomType) -> Result<Type, Box<dyn CustomTypeError>> {
+        self.unify(other.try_cast_to().unwrap())
+            .map_err(|x| Box::new(x) as Box<dyn CustomTypeError>)
+            .map(|x| Type::custom(CustomType::new(self_repr.get_name(), x)))
+    }
+
+    fn matches(&self, _self_repr: &CustomType, other: &CustomType) -> bool {
+        self.matches(other.try_cast_to().unwrap())
+    }
+
+    fn hash(&self, _self_repr: &CustomType) -> u64 {
+        use std::hash::*;
+        let mut h = DefaultHasher::new();
+        self.hash(&mut h);
+        h.finish()
+    }
+}
+
 pub struct CustomType {
     var: TypeVar,
-    inner: Any<dyn CustomTypeInner>,
+    inner: Box<dyn CustomTypeInner>,
+}
+
+#[cfg(feature = "quote")]
+impl TryQuote for CustomType {
+    fn try_quote(&self) -> Result<proc_macro2::TokenStream, ()> {
+        let inner = self.get_inner().try_quote()?;
+        let ty = self.get_name();
+        let ty = ty.as_ref();
+        Ok(quote::quote! { vxcc_ir::types::CustomType::new(#ty, #inner) })
+    }
+}
+
+impl PartialEq for CustomType {
+    fn eq(&self, other: &Self) -> bool {
+        self.var == other.var
+    }
+}
+
+impl Eq for CustomType {}
+
+impl Hash for CustomType {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.var.hash(state);
+        state.write_u64(self.inner.hash(self));
+    }
+}
+
+impl CustomType {
+    pub fn new<T: CustomTypeInner>(var: TypeVar, val: T) -> Self {
+        CustomType {
+            var,
+            inner: Box::new(val)
+        }
+    }
+
+    pub fn get_name(&self) -> TypeVar {
+        self.var.clone()
+    }
+
+    fn get_inner(&self) -> &dyn CustomTypeInner {
+        self.inner.as_ref()
+    }
+
+    pub fn try_cast_to<T: CustomTypeInner>(&self) -> Option<&T> {
+        (self.get_inner() as &dyn Any).downcast_ref()
+    }
+
+    fn unify(&self, other: &Self) -> Result<Type, TypeError> {
+        self.get_inner()
+            .unify(self, other)
+            .map_err(|x| CustomTypeErrorWrapper::new(x, self.get_name())
+                .into())
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        self.get_name() == other.get_name()
+            && self.get_inner().matches(self, other)
+    }
 }
 
 impl std::fmt::Display for CustomType {
@@ -78,7 +189,7 @@ impl std::fmt::Display for TypeAnd {
                 TypeImpl::Any        |
                 TypeImpl::Var(_)     |
                 TypeImpl::Unspec(_)  |
-                TypeImpl::NumList(_) |
+                TypeImpl::Custom(_) |
                 TypeImpl::Ground(_) => write!(f, "{}", x)?,
 
                 TypeImpl::And(_) => write!(f, "({})", x)?,
@@ -91,14 +202,14 @@ impl std::fmt::Display for TypeAnd {
     }
 }
 
-impl<I: Iterator<Item = Type>> From<I> for TypeAnd {
+impl TypeAnd {
     /// this allows nested ands and flattens them
     ///
     /// this also deduplicates
-    fn from(value: I) -> Self {
+    fn try_from<I: Iterator<Item = Type>>(value: I) -> Result<Self, TypeError> {
         let mut conjugate = Vec::<Type>::new();
 
-        let mut add = |item: Type| {
+        let mut add = |item: Type| -> Result<(), TypeError> {
             match &*item.0 {
                 TypeImpl::Any => {}
 
@@ -117,8 +228,15 @@ impl<I: Iterator<Item = Type>> From<I> for TypeAnd {
                     }
                 }
 
-                TypeImpl::NumList(_) => {
-                    conjugate.push(item);
+                TypeImpl::Custom(custom) => {
+                    if let Some((idx, other)) = conjugate.iter()
+                        .find_position(|x| match &*x.0 { TypeImpl::Custom(c) => c.get_name() == custom.get_name(), _ => false })
+                    {
+                        let other = match &*other.0 { TypeImpl::Custom(c) => c, _ => unreachable!() };
+                        conjugate[idx] = custom.unify(other)?;
+                    } else {
+                        conjugate.push(item);
+                    }
                 }
 
                 TypeImpl::Ground(g) => {
@@ -136,14 +254,17 @@ impl<I: Iterator<Item = Type>> From<I> for TypeAnd {
                         let g = g.get_params();
                         let xg = xg.get_params();
 
-                        conjugate[idx] = Type::ground_kv(tag,
-                            g.keys().chain(xg.keys()).dedup()
+                        let inner = g.keys().chain(xg.keys()).dedup()
                             .map(|key| {
                                 let dedup = [g.get(key), xg.get(key)].into_iter()
                                         .filter_map(|x| x.cloned())
                                         .collect::<Vec<_>>();
-                                (key.as_str(), Type::and(dedup.into_iter()))
-                            }));
+                                Type::and(dedup.into_iter())
+                                    .map(|x| (key.as_str(), x))
+                            })
+                            .collect::<Result<Vec<_>,_>>()?;
+
+                        conjugate[idx] = Type::ground_kv(tag, inner.into_iter());
                     } else {
                         conjugate.push(item);
                     }
@@ -151,29 +272,29 @@ impl<I: Iterator<Item = Type>> From<I> for TypeAnd {
 
                 TypeImpl::And(_) => unreachable!(),
             };
+
+            Ok(())
         };
 
         for item in value {
             match &*item.0 {
                 TypeImpl::And(nested) => {
                     // recursively flattens
-                    let nested = Self::from(nested.get_all()).conjugate;
+                    let nested = Self::try_from(nested.get_all())?.conjugate;
                     for x in nested.into_iter() {
-                        add(x);
+                        add(x)?;
                     }
                 }
 
                 _ => {
-                    add(item);
+                    add(item)?;
                 }
             }
         }
 
-        TypeAnd { conjugate }
+        Ok(TypeAnd { conjugate })
     }
-}
 
-impl TypeAnd {
     pub fn get_all(&self) -> impl Iterator<Item = Type> {
         self.conjugate.iter()
             .map(|x| x.clone())
@@ -293,7 +414,7 @@ impl std::fmt::Display for TypeImpl {
             TypeImpl::Var(inner) => write!(f, "{}", inner),
             TypeImpl::And(inner) => write!(f, "{}", inner),
             TypeImpl::Ground(inner) => write!(f, "{}", inner),
-            TypeImpl::NumList(inner) => write!(f, "{}", inner),
+            TypeImpl::Custom(inner) => write!(f, "{}", inner),
             TypeImpl::Unspec(inner) => write!(f, "?{}", inner),
         }
     }
@@ -303,11 +424,11 @@ impl std::fmt::Display for TypeImpl {
 pub struct Type(pub Arc<TypeImpl>);
 
 #[cfg(feature = "quote")]
-impl quote::ToTokens for Type {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl TryQuote for Type {
+    fn try_quote(&self) -> Result<proc_macro2::TokenStream, ()> {
         use quote::quote;
 
-        tokens.extend(match &*self.0 {
+        Ok(match &*self.0 {
             TypeImpl::Any => quote! { vxcc_ir::types::Type::any() },
 
             TypeImpl::Var(type_var_impl) => {
@@ -317,8 +438,8 @@ impl quote::ToTokens for Type {
 
             TypeImpl::And(inner) => {
                 let inner = inner.get_all()
-                    .flat_map(|x| quote! { #x, })
-                    .collect::<proc_macro2::TokenStream>();
+                    .map(|x| x.try_quote().map(|x| quote! { #x, }))
+                    .collect::<Result<proc_macro2::TokenStream,_>>()?;
 
                 quote! { vxcc_ir::types::Type::and([#inner].into_iter()) }
             }
@@ -329,17 +450,18 @@ impl quote::ToTokens for Type {
 
                 let keys = g.get_params()
                     .into_iter()
-                    .flat_map(|(l,r)| quote! { (#l,#r), })
-                    .collect::<proc_macro2::TokenStream>();
+                    .map(|(l,r)| {
+                        r.try_quote()
+                            .map(|r| quote! { (#l,#r), })
+                    })
+                    .collect::<Result<proc_macro2::TokenStream, _>>()?;
 
                 quote! { vxcc_ir::types::Type::ground_kv(#name, [#keys].into_iter()) }
             }
 
-            TypeImpl::NumList(type_num_list) => {
-                let inner = type_num_list.get_elements()
-                    .flat_map(|x| quote! { #x , })
-                    .collect::<proc_macro2::TokenStream>();
-                quote! { vxcc_ir::types::Type::num_list([#inner].into_iter()) }
+            TypeImpl::Custom(custom) => {
+                let custom = custom.try_quote()?;
+                quote! { vxcc_ir::types::Type::custom(#custom) }
             }
 
             TypeImpl::Unspec(v) => quote! { vxcc_ir::types::Type::unspec(#v) },
@@ -365,30 +487,6 @@ impl From<TypeImpl> for Type {
     }
 }
 
-pub trait TypeUnify {
-    fn unify(&self, other: &Type) -> Type;
-}
-
-impl TypeUnify for Option<&Type> {
-    fn unify(&self, other: &Type) -> Type {
-        if let Some(x) = self {
-            x.unify(other)
-        } else {
-            other.clone()
-        }
-    }
-}
-
-impl TypeUnify for Option<Type> {
-    fn unify(&self, other: &Type) -> Type {
-        if let Some(x) = self {
-            x.unify(other)
-        } else {
-            other.clone()
-        }
-    }
-}
-
 lazy_static::lazy_static! {
     static ref DENORM_LUT: Mutex<HashMap<TypeVar, Vec<(Type, Type)>>> = Mutex::new(HashMap::new());
 }
@@ -397,7 +495,9 @@ lazy_static::lazy_static! {
 pub struct CustomTypeErrorWrapper {
     tyname: TypeVar,
     err: Box<dyn CustomTypeError>
-};
+}
+
+impl std::error::Error for CustomTypeErrorWrapper {}
 
 impl CustomTypeErrorWrapper {
     fn new(inner: Box<dyn CustomTypeError>, tyname: TypeVar) -> Self {
@@ -412,7 +512,7 @@ impl std::fmt::Display for CustomTypeErrorWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Error while handeling {}: {}", self.tyname, self.err)
     }
-};
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum TypeError {
@@ -422,7 +522,7 @@ pub enum TypeError {
     #[error("type templates are only allowed on the right hand side (in implies)")]
     LeftHandSideUnspecNotAllowed,
 
-    #[transparent]
+    #[error(transparent)]
     Custom(#[from] CustomTypeErrorWrapper)
 }
 
@@ -432,6 +532,10 @@ impl Type {
             TypeImpl::And(g) => g.get_all().collect(),
             _ => vec!(self.clone())
         }
+    }
+
+    pub fn custom(c: CustomType) -> Self {
+        Self::from(TypeImpl::Custom(c))
     }
 
     pub fn any() -> Self {
@@ -446,11 +550,12 @@ impl Type {
         Self::from(TypeImpl::Unspec(name.to_string()))
     }
 
-    pub fn and<I: Iterator<Item = Type>>(from: I) -> Self {
-        Self::from(TypeImpl::And(TypeAnd::from(from)))
+    pub fn and<I: Iterator<Item = Type>>(from: I) -> Result<Self, TypeError> {
+        TypeAnd::try_from(from)
+            .map(|x| Self::from(TypeImpl::And(x)))
     }
 
-    pub fn and_pair(&self, b: &Self) -> Self {
+    pub fn and_pair(&self, b: &Self) -> Result<Type, TypeError> {
         Self::and([self.clone(), b.clone()].into_iter())
     }
 
@@ -492,10 +597,6 @@ impl Type {
         }
     }
 
-    pub fn num_list<I: Iterator<Item = i64>>(from: I) -> Self {
-        Self::from(TypeImpl::NumList(TypeNumList { elts: from.collect() }))
-    }
-
     fn optimize(&self) -> Self {
         match &*self.0 {
             TypeImpl::And(a) => {
@@ -510,9 +611,8 @@ impl Type {
         }
     }
 
-    pub fn unify(&self, other: &Self) -> Self {
-        let tand = Self::and_pair(self, other);
-        tand.optimize()
+    pub fn unify(&self, other: &Self) -> Result<Self, TypeError> {
+        Self::and_pair(self, other).map(|x| x.optimize())
     }
 
     pub(crate) fn denorm_add( /* from TVar or TGround */ ty: TypeVar, requires: Type, implies: Type) {
@@ -568,7 +668,7 @@ impl Type {
                     TypeImpl::Any |
                     TypeImpl::Var(_) |
                     TypeImpl::Unspec(_) |
-                    TypeImpl::NumList(_) => (),
+                    TypeImpl::Custom(_) => (),
 
                     TypeImpl::And(_) => panic!(),
 
@@ -595,14 +695,14 @@ impl Type {
                 }
                 new_cases.push(out);
             }
-            out = Type::and(new_cases.into_iter());
+            out = Type::and(new_cases.into_iter())?;
 
             for (req, implies) in self.denorm_options() {
                 let mut map = HashMap::new();
                 if self.fast_matches(&req, &mut map) {
                     let old_out = out;
                     let implied = implies.expand_unspec(&map)?;
-                    out = Type::and_pair(&old_out, &implied);
+                    out = Type::and_pair(&old_out, &implied)?;
 
                     let mut thefuckisthis = HashMap::new();
                     if !old_out.fast_matches(&out, &mut thefuckisthis) {
@@ -633,10 +733,10 @@ impl Type {
                     .expand_unspec(map)?),
 
             TypeImpl::And(a) =>
-                Ok(Type::and(a.get_all()
+                Type::and(a.get_all()
                         .map(|x| x.expand_unspec(map))
                         .collect::<Result<Vec<_>,_>>()?
-                        .into_iter())),
+                        .into_iter()),
 
             TypeImpl::Ground(g) =>
                 Ok(Type::ground_kv(&g.get_tag(), g.get_params()
@@ -653,7 +753,7 @@ impl Type {
         match &*self.0 {
             TypeImpl::Any => vec!(),
             TypeImpl::Var(v) => vec!(v.clone()),
-            TypeImpl::NumList(_) => vec!(),
+            TypeImpl::Custom(_) => vec!(),
             TypeImpl::Unspec(_) => vec!(),
             TypeImpl::Ground(g) => vec!(g.get_tag()),
             TypeImpl::And(a) => a.get_all().flat_map(|x| x.to_var_list().into_iter()).collect()
@@ -664,7 +764,7 @@ impl Type {
         match &*self.0 {
             TypeImpl::Any => 0,
             TypeImpl::Var(_) => 1,
-            TypeImpl::NumList(_) => 2,
+            TypeImpl::Custom(_) => 2,
             TypeImpl::Unspec(_) => 2,
             TypeImpl::And(and) => and.get_all().map(|x| x.approx_expressiveness()).sum(),
             TypeImpl::Ground(_) => 5,
@@ -743,9 +843,12 @@ impl Type {
                     })
             }
 
-            TypeImpl::NumList(numlist) => match &*self.0 {
-                TypeImpl::NumList(th) => th == numlist,
-                _ => false
+            TypeImpl::Custom(custom) => {
+                match &*self.0 {
+                    TypeImpl::Custom(x) => custom.matches(x),
+                    TypeImpl::And(x) => x.get_all().any(|x| x.fast_matches(other, out)),
+                    _ => false
+                }
             }
         }
     }
