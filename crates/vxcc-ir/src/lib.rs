@@ -92,7 +92,7 @@ impl DialectRegistry {
         }
     }
 
-    pub fn get() -> std::sync::MutexGuard<'static, Self> {
+    fn get() -> std::sync::MutexGuard<'static, Self> {
         lazy_static::lazy_static! {
             static ref REGISTRY: Mutex<DialectRegistry> = Mutex::new(DialectRegistry::new());
         }
@@ -100,16 +100,19 @@ impl DialectRegistry {
         REGISTRY.lock().unwrap()
     }
 
-    pub fn get_dialects(&self) -> impl Iterator<Item = (&str, DialectRef)> {
-        self.dialects.iter().map(|(k,v)| (k.as_str(), v.clone()))
+    pub fn get_dialects() -> Vec<(String, DialectRef)> {
+        Self::get()
+            .dialects.iter()
+            .map(|(k,v)| (k.as_str().to_string(), v.clone()))
+            .collect()
     }
 
-    pub fn get_dialect(&self, key: &str) -> Option<DialectRef> {
-        self.dialects.get(key).cloned()
+    pub fn get_dialect(key: &str) -> Option<DialectRef> {
+        Self::get().dialects.get(key).cloned()
     }
 
-    pub(crate) fn add(&mut self, key: &str, val: DialectRef) {
-        self.dialects.insert(key.to_string(), val);
+    pub(crate) fn add(key: &str, val: DialectRef) {
+        Self::get().dialects.insert(key.to_string(), val);
     }
 }
 
@@ -124,14 +127,19 @@ impl DialectBuilder {
     }
 
     pub fn build(self) -> DialectOwner {
-        DialectRegistry::get().add(self.0.name.as_str(), self.0.clone());
+        DialectRegistry::add(self.0.name.as_str(), self.0.clone());
         DialectOwner { dialect: self.0 }
     }
 
     pub fn add_type(&mut self, name: &str) -> types::TypeVar {
+        self.add_ground_type(name, std::iter::empty::<String>())
+    }
+
+    pub fn add_ground_type<I: Iterator<Item = S>, S: AsRef<str>>(&mut self, name: &str, params: I) -> types::TypeVar {
         let t = types::TypeVar::new(types::TypeVarImpl {
             dialect: self.0.clone(),
-            name: name.to_string()
+            name: name.to_string(),
+            ground_args: params.map(|x| x.as_ref().to_string()).collect()
         });
         self.0.types.lock().unwrap().borrow_mut().insert(name.to_string(), t.clone());
         t

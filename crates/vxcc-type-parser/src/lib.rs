@@ -15,8 +15,7 @@ fn type_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::Int
         let var = exact_ident("dyn")
             .ignore_then(id.clone())
             .map(|(d,v)| quote! {
-                ::vxcc_ir::DialectRegistry::get()
-                    .get_dialect(#d).unwrap()
+                ::vxcc_ir::DialectRegistry::get_dialect(#d).unwrap()
                     .find_type(#v).unwrap()
             })
             .or(id.clone()
@@ -43,6 +42,7 @@ fn type_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::Int
             .ignore_then(ident())
             .map(|i| quote! { ::vxcc_ir::types::Type::unspec(#i) });
 
+        // TODO: fill members of init struct when not var dyn
         let ground = var.clone()
             .then(ident()
                 .then_ignore(punct(':'))
@@ -54,7 +54,7 @@ fn type_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::Int
             .map(|(var, args)| {
                 let args = args
                     .into_iter()
-                    .flat_map(|(k,v)| quote! { (#k,#v), })
+                    .flat_map(|(k,v)| quote! { (#var.ground_arg(#k).unwrap(),#v), })
                     .collect::<proc_macro2::TokenStream>();
                 quote! { ::vxcc_ir::types::Type::ground_kv(&#var, [#args].into_iter()) }
             });

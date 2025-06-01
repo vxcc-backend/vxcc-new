@@ -7,6 +7,7 @@ use crate::*;
 pub struct TypeVarImpl {
     pub(crate) dialect: DialectRef,
     pub(crate) name: String,
+    pub(crate) ground_args: Vec<String>
 }
 
 impl std::fmt::Display for TypeVarImpl {
@@ -21,6 +22,12 @@ impl std::fmt::Debug for TypeVarImpl {
     }
 }
 
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub struct GroundArgRef {
+    to: TypeVar,
+    idx: usize
+}
+
 impl TypeVarImpl {
     pub fn get_dialect(&self) -> DialectRef {
         self.dialect.clone()
@@ -28,6 +35,13 @@ impl TypeVarImpl {
 
     pub fn get_name(&self) -> &str {
         self.name.as_str()
+    }
+
+    pub fn ground_arg(self: &Arc<Self>, name: &str) -> Result<GroundArgRef, TypeError> {
+        self.ground_args.iter()
+            .find_position(|x| x.as_str() == name)
+            .ok_or_else(|| TypeError::GroundArgNotRegistered { tag: self.clone(), name: name.to_string() })
+            .map(|(idx, _)| GroundArgRef { to: self.clone(), idx })
     }
 }
 
@@ -250,21 +264,15 @@ impl TypeAnd {
                     if let Some((idx, xg)) = ptr {
                         let xg = xg.unwrap();
 
-                        let tag = &g.tag;
-                        let g = g.get_params();
-                        let xg = xg.get_params();
+                        let newv = g.inner.0.iter()
+                            .zip(xg.inner.0.iter())
+                            .map(|(a,b)| a.and_pair(b))
+                            .collect::<Result<_,_>>()?;
 
-                        let inner = g.keys().chain(xg.keys()).dedup()
-                            .map(|key| {
-                                let dedup = [g.get(key), xg.get(key)].into_iter()
-                                        .filter_map(|x| x.cloned())
-                                        .collect::<Vec<_>>();
-                                Type::and(dedup.into_iter())
-                                    .map(|x| (key.as_str(), x))
-                            })
-                            .collect::<Result<Vec<_>,_>>()?;
-
-                        conjugate[idx] = Type::ground_kv(tag, inner.into_iter());
+                        conjugate[idx] = Type::from(TypeImpl::Ground(TypeGround {
+                            tag: g.get_tag(),
+                            inner: TypeGroundInner(newv),
+                        }))
                     } else {
                         conjugate.push(item);
                     }
@@ -301,17 +309,8 @@ impl TypeAnd {
     }
 }
 
-#[derive(Eq, PartialEq)]
-struct TypeGroundInner(HashMap<String, Type>);
-
-impl std::hash::Hash for TypeGroundInner {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        for (k,v) in self.0.iter() {
-            k.hash(state);
-            v.hash(state);
-        }
-    }
-}
+#[derive(Eq, PartialEq, Hash)]
+struct TypeGroundInner(Vec<Type>);
 
 #[derive(Eq, PartialEq, Hash)]
 pub struct TypeGround {
@@ -319,18 +318,25 @@ pub struct TypeGround {
     inner: TypeGroundInner,
 }
 
+impl std::ops::Index<GroundArgRef> for TypeGround {
+    type Output = Type;
+
+    fn index(&self, index: GroundArgRef) -> &Self::Output {
+        assert_eq!(index.to, self.get_tag());
+        &self.inner.0[index.idx]
+    }
+}
+
 impl TypeGround {
     pub fn get_tag(&self) -> TypeVar {
         self.tag.clone()
     }
 
-    pub fn get_param(&self, name: &str) -> Option<Type> {
-        self.inner.0.get(name).cloned()
-    }
-
-    pub fn get_params(&self) -> HashMap<String, Type> {
-        self.inner.0.iter()
-            .map(|(k,v)| (k.clone(), v.clone()))
+    pub fn get_params(&self) -> Vec<(String, Type)> {
+        self.get_tag()
+            .ground_args.iter()
+            .zip(self.inner.0.iter())
+            .map(|(k,v)| (k.to_string(), v.clone()))
             .collect()
     }
 }
@@ -501,6 +507,18 @@ pub enum TypeError {
     #[error("type templates are only allowed on the right hand side (in implies)")]
     LeftHandSideUnspecNotAllowed,
 
+    #[error("ground argument {name} not a member of {tag}")]
+    GroundArgNotRegistered {
+        tag: TypeVar,
+        name: String
+    },
+
+    #[error("{tag} expects ground argument {name}, but it was not provided")]
+    GroundArgNotSet {
+        tag: TypeVar,
+        name: String
+    },
+
     #[error(transparent)]
     Custom(#[from] CustomTypeErrorWrapper)
 }
@@ -549,19 +567,32 @@ impl Type {
     /// can be used for named type arguments, and structs
     ///
     /// if there are no arguments, this panics!
-    pub fn ground_kv<'a, S: AsRef<str>, I: Iterator<Item = (S, Type)>>(tag: &TypeVar, from: I) -> Self {
-        let inner: HashMap<_,_> = from
-            .map(|(k,v)| (k.as_ref().to_string(), v))
-            .collect();
-
-        if inner.is_empty() {
-            panic!("ground args are empty");
-        } else {
-            Self::from(TypeImpl::Ground(TypeGround {
-                tag: tag.clone(),
-                inner: TypeGroundInner(inner)
-            }))
+    pub fn ground_kv<'a, I: Iterator<Item = (GroundArgRef, Type)>>(tag: &TypeVar, from: I) -> Result<Self, TypeError> {
+        let mut out = Vec::<Option<Type>>::new();
+        for _ in 0..tag.ground_args.len() {
+            out.push(None);
         }
+
+        for (k,v) in from {
+            assert_eq!(&k.to, tag);
+            if out[k.idx].is_some() {
+                Err(TypeError::GroundArgNotSet { tag: tag.clone(), name: k.to.ground_args[k.idx].clone() })?
+            }
+            out[k.idx] = Some(v);
+        }
+
+        let out = out.into_iter()
+            .enumerate()
+            .map(|(idx,x)| x.ok_or_else(|| TypeError::GroundArgNotSet {
+                tag: tag.clone(),
+                name: tag.ground_args[idx].clone()
+            }))
+            .collect::<Result<Vec<_>,_>>()?;
+
+        Ok(Self::from(TypeImpl::Ground(TypeGround {
+            tag: tag.clone(),
+            inner: TypeGroundInner(out)
+        })))
     }
 
     fn optimize(&self) -> Self {
@@ -637,25 +668,23 @@ impl Type {
                     TypeImpl::Unspec(_) |
                     TypeImpl::Custom(_) => (),
 
-                    TypeImpl::And(_) => panic!(),
+                    TypeImpl::And(_) => unreachable!(),
 
                     TypeImpl::Ground(g) => {
-                        let mut new: Option<Vec<_>> = None;
-                        for (idx, item) in g.get_params().into_iter().enumerate() {
-                            let (anew, ch) = item.1.denormx()?;
-                            if ch || new.is_some() {
-                                if let Some(new) = &mut new {
-                                    new[idx] = (item.0, anew);
-                                } else {
-                                    let mut v = g.get_params().into_iter().collect::<Vec<_>>();
-                                    v[idx] = (item.0, anew);
-                                    new = Some(v);
-                                }
-                            }
-                        }
+                        let mut schg = false;
+                        let new = g.inner.0
+                            .iter()
+                            .map(|v| v.denormx().map(|(v,c)| {
+                                schg = c;
+                                v
+                            }))
+                            .collect::<Result<Vec<_>,_>>()?;
 
-                        if let Some(new) = new {
-                            out = Type::ground_kv(&g.get_tag(), new.into_iter());
+                        if schg {
+                            out = Type::from(TypeImpl::Ground(TypeGround {
+                                tag: g.get_tag(),
+                                inner: TypeGroundInner(new),
+                            }));
                             changed = true;
                         }
                     }
@@ -706,11 +735,13 @@ impl Type {
                         .into_iter()),
 
             TypeImpl::Ground(g) =>
-                Ok(Type::ground_kv(&g.get_tag(), g.get_params()
+                Ok(Type::from(TypeImpl::Ground(TypeGround {
+                    tag: g.get_tag(),
+                    inner: TypeGroundInner(g.inner.0
                         .iter()
-                        .map(|(k,v)| v.clone().expand_unspec(map).map(|x| (k.as_str(), x)))
-                        .collect::<Result<Vec<_>,_>>()?
-                        .into_iter())),
+                        .map(|v| v.clone().expand_unspec(map))
+                        .collect::<Result<Vec<_>,_>>()?)
+                }))),
 
             _ => Ok(self)
         }
@@ -756,18 +787,9 @@ impl Type {
                 return false;
             }
 
-            for (k,v) in other.get_params().into_iter() {
-                let tv = this.get_param(k.as_str());
-                if let Some(tv) = tv {
-                    if !tv.fast_matches(&v, out) {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            }
-
-            true
+            this.inner.0.iter()
+                .zip(other.inner.0.iter())
+                .all(|(t,o)| t.fast_matches(o, out))
         }
 
         match &*other.0 {
