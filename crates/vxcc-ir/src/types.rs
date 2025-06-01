@@ -302,24 +302,13 @@ impl TypeAnd {
 }
 
 #[derive(Eq, PartialEq)]
-enum TypeGroundInner {
-    KV(HashMap<String, Type>),
-    List(Vec<Type>),
-}
+struct TypeGroundInner(HashMap<String, Type>);
 
 impl std::hash::Hash for TypeGroundInner {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            TypeGroundInner::KV(kv) => {
-                for (k,v) in kv.iter() {
-                    k.hash(state);
-                    v.hash(state);
-                }
-            }
-
-            TypeGroundInner::List(li) => {
-                li.hash(state);
-            }
+        for (k,v) in self.0.iter() {
+            k.hash(state);
+            v.hash(state);
         }
     }
 }
@@ -336,23 +325,13 @@ impl TypeGround {
     }
 
     pub fn get_param(&self, name: &str) -> Option<Type> {
-        match &self.inner {
-            TypeGroundInner::KV(kv) => kv.get(name).cloned(),
-            TypeGroundInner::List(li) => name.parse().ok().and_then(|x: usize| li.get(x)).cloned()
-        }
+        self.inner.0.get(name).cloned()
     }
 
     pub fn get_params(&self) -> HashMap<String, Type> {
-        match &self.inner {
-            TypeGroundInner::KV(kv) => kv.iter()
-                .map(|(k,v)| (k.clone(), v.clone()))
-                .collect(),
-
-            TypeGroundInner::List(li) => li.iter()
-                .enumerate()
-                .map(|(k,v)| (k.to_string(), v.clone()))
-                .collect()
-        }
+        self.inner.0.iter()
+            .map(|(k,v)| (k.clone(), v.clone()))
+            .collect()
     }
 }
 
@@ -580,25 +559,7 @@ impl Type {
         } else {
             Self::from(TypeImpl::Ground(TypeGround {
                 tag: tag.clone(),
-                inner: TypeGroundInner::KV(inner)
-            }))
-        }
-    }
-
-    /// like [Self::ground_kv], but enumerates names with 0..
-    ///
-    /// should be used for things like tuples
-    ///
-    /// if there are no arguments, this simplifies to [Self::var]
-    pub fn ground_nums<I: Iterator<Item = Type>>(tag: &TypeVar, from: I) -> Self {
-        let inner: Vec<_> = from.collect();
-
-        if inner.is_empty() {
-            Self::var(tag)
-        } else {
-            Self::from(TypeImpl::Ground(TypeGround {
-                tag: tag.clone(),
-                inner: TypeGroundInner::List(inner)
+                inner: TypeGroundInner(inner)
             }))
         }
     }

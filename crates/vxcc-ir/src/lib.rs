@@ -1,5 +1,4 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::{Arc, Mutex}};
-use tinyvec::ArrayVec;
 use itertools::Itertools;
 
 pub mod types;
@@ -11,9 +10,6 @@ mod types_tests;
 type NodePortVecIdx = u8;
 pub type NodeUID = quid::UID;
 type NodeTypeUID = quid::UID;
-
-pub const MAX_NODE_INPUTS: usize = 16;
-pub const MAX_NODE_OUTPUTS: usize = 8;
 
 pub struct NoDebug<T>(pub T);
 
@@ -263,21 +259,27 @@ pub trait NodeOutTypeInfer {
 }
 
 pub struct NodeTypeImpl {
-  uid: NodeTypeUID,
-  dialect: DialectRef,
-  input_lookup: HashMap<String, (NodePortVecIdx, types::Type)>,
-  output_lookup: HashMap<String, NodePortVecIdx>,
-  infer: Box<dyn NodeOutTypeInfer + Send + Sync>,
-  name: String,
+    /// only used for faster hashing at runtime
+    runtime_uid: NodeTypeUID,
+    dialect: DialectRef,
+    input_lookup: HashMap<String, (NodePortVecIdx, types::Type)>,
+    output_lookup: HashMap<String, NodePortVecIdx>,
+    infer: Box<dyn NodeOutTypeInfer + Send + Sync>,
+    name: String,
 }
 
 impl std::hash::Hash for NodeTypeImpl {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.uid.hash(state)
+        self.get_temporary_uid().hash(state)
     }
 }
 
 impl NodeTypeImpl {
+    /// will change during IR re-serialization
+    pub fn get_temporary_uid(&self) -> NodeTypeUID {
+        self.runtime_uid.clone()
+    }
+
     pub fn get_dialect(&self) -> DialectRef {
         self.dialect.clone()
     }
@@ -337,17 +339,21 @@ impl std::fmt::Debug for NodeTypeImpl {
 
 impl PartialEq for NodeTypeImpl {
     fn eq(&self, other: &Self) -> bool {
-        self.uid == other.uid
+        self.get_temporary_uid() == other.get_temporary_uid()
     }
 }
 
 pub type NodeType = Arc<NodeTypeImpl>;
 
+
+// type NodeInoutVec<T> = ArrayVec<[T; 8]>;
+type NodeInoutVec<T> = Vec<T>;
+
 pub struct NodeImpl {
     uid: NodeUID,
     typ: NodeType,
-    inputs: ArrayVec<[Option<Out>; MAX_NODE_INPUTS]>,
-    outputs: ArrayVec<[(Vec<In>, Option<types::Type>); MAX_NODE_OUTPUTS]>,
+    inputs: NodeInoutVec<Option<Out>>,
+    outputs: NodeInoutVec<(Vec<In>, Option<types::Type>)>,
     inferred: bool,
 }
 
@@ -367,7 +373,7 @@ impl Node {
         I: Iterator<Item = (S, Out)>,
         S: AsRef<str>
     {
-        let mut ins = ArrayVec::new();
+        let mut ins = NodeInoutVec::new();
         for _ in 0..ty.num_inputs() {
             ins.push(None);
         }
@@ -384,7 +390,7 @@ impl Node {
             uid: NodeUID::new(),
             typ: ty.clone(),
             inputs: ins,
-            outputs: ArrayVec::new(),
+            outputs: NodeInoutVec::new(),
             inferred: false,
         }))))
     }
