@@ -14,7 +14,7 @@ fn test_simple_unify() {
     assert!(uni.matches(&ty_num).unwrap());
     assert!(uni.matches(&ty_uint).unwrap());
     assert!(uni.matches(&Type::and_pair(&ty_uint, &ty_num).unwrap()).unwrap());
-    assert!(!uni.matches(&Type::var(&core_dialect::DIALECT.clone)).unwrap());
+    assert!(!uni.matches(&Type::var(&vxcc_core_dialect::DIALECT.types.Clone)).unwrap());
     assert!(!ty_i8.matches(&ty_num).unwrap());
 }
 

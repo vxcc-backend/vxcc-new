@@ -526,6 +526,12 @@ pub enum TypeError {
     Custom(#[from] CustomTypeErrorWrapper)
 }
 
+impl Into<Type> for CustomType {
+    fn into(self) -> Type {
+        Type::custom(self)
+    }
+}
+
 impl Type {
     fn like_and(&self) -> Vec<Type> {
         match &*self.0 {

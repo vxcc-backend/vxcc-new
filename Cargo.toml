@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/vxcc-ir"
+    "crates/vxcc-ir",
+    "crates/vxcc-type-parser"
 ]

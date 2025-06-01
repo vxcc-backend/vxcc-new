@@ -3,7 +3,7 @@ use tinyvec::ArrayVec;
 use itertools::Itertools;
 
 pub mod types;
-pub mod core_dialect;
+pub mod vxcc_core_dialect;
 
 #[cfg(test)]
 mod types_tests;
@@ -518,7 +518,7 @@ impl Out {
         self.get_node().ensure_inferred()?;
         let self_ty = self.get_type()?;
         if self.find_reference_ports().count() > 0 {
-            if !self_ty.matches(&types::Type::var(&core_dialect::DIALECT.clone))? {
+            if !self_ty.matches(&types::Type::var(&vxcc_core_dialect::DIALECT.types.Clone))? {
                 Err(IrError::DoesNotImplementClone {
                     ty: self_ty.clone(),
                     ctx: NoDebug(self.get_node())
@@ -574,7 +574,7 @@ impl In {
 
     /// this errors if the type doesn't implement Drop
     pub fn disconnect(&self) -> Result<(), IrError> {
-        if !self.get_type().matches(&types::Type::var(&core_dialect::DIALECT.drop))? {
+        if !self.get_type().matches(&types::Type::var(&vxcc_core_dialect::DIALECT.types.Drop))? {
             Err(IrError::DoesNotImplementDrop {
                 ty: self.get_type(),
                 ctx: NoDebug(self.clone()),

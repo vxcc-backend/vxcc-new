@@ -1,22 +1,29 @@
 use crate::*;
 
-pub struct CoreDialect {
-    pub dialect: DialectRef,
-
-    pub clone: types::TypeVar,
-    pub drop: types::TypeVar,
+#[allow(non_snake_case)]
+pub struct CoreTypes {
+    pub Clone: types::TypeVar,
+    pub Drop: types::TypeVar,
 }
 
+pub struct CoreDialect {
+    pub dialect: DialectRef,
+    pub types: CoreTypes,
+}
+
+#[allow(non_snake_case)]
 fn create() -> CoreDialect {
     let mut builder = DialectBuilder::new("core");
 
-    let clone = builder.add_type("Clone");
-    let drop = builder.add_type("Drop");
+    let Clone = builder.add_type("Clone");
+    let Drop = builder.add_type("Drop");
 
     let own = builder.build();
     CoreDialect {
         dialect: own.get_dialect(),
-        clone, drop
+        types: CoreTypes {
+            Clone, Drop
+        }
     }
 }
 
