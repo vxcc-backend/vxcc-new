@@ -503,28 +503,41 @@ impl std::fmt::Display for CustomTypeErrorWrapper {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum TypeError {
-    #[error("not all templates could be expanded in implies expression")]
     NotAllTemplatesExpanded,
 
-    #[error("type templates are only allowed on the right hand side (in implies)")]
     LeftHandSideUnspecNotAllowed,
 
-    #[error("ground argument {name} not a member of {tag}")]
     GroundArgNotRegistered {
         tag: TypeVar,
         name: String
     },
 
-    #[error("{tag} expects ground argument {name}, but it was not provided")]
     GroundArgNotSet {
         tag: TypeVar,
         name: String
     },
 
-    #[error(transparent)]
-    Custom(#[from] CustomTypeErrorWrapper)
+    Custom(CustomTypeErrorWrapper)
+}
+
+impl std::fmt::Display for TypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeError::NotAllTemplatesExpanded => write!(f, "not all templates could be expanded in implies expression"),
+            TypeError::LeftHandSideUnspecNotAllowed => write!(f, "type templates are only allowed on the right hand side (in implies)"),
+            TypeError::GroundArgNotRegistered { tag, name } => write!(f, "ground argument {name} not a member of {tag}"),
+            TypeError::GroundArgNotSet { tag, name } => write!(f, "{tag} expects ground argument {name}, but it was not provided"),
+            TypeError::Custom(inner) => write!(f, "{inner}"),
+        }
+    }
+}
+
+impl From<CustomTypeErrorWrapper> for TypeError {
+    fn from(value: CustomTypeErrorWrapper) -> Self {
+        Self::Custom(value)
+    }
 }
 
 impl Into<Type> for CustomType {

@@ -25,60 +25,73 @@ impl<T: std::fmt::Display> std::fmt::Display for NoDebug<T> {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug)]
 pub enum IrError {
-    #[error("cannot connect `{from}` to input port `{to}` of different type")]
     CannotConnectBetweenMismatchingTypes {
         from: NoDebug<Out>,
         to: NoDebug<In>
     },
 
-    #[error("input port `{port}` is already connected to somewhere. cannot assign using try_connect")]
     AlreadyConnected {
         port: NoDebug<In>,
     },
 
-    #[error("not all node outputs had types inferred")]
     NotFullyTypeInferred {
         ctx: NoDebug<Node>,
     },
 
-    #[error("the given key `{key}` does not exist in outputs of {ctx}")]
     NodeOutputNotFound {
         key: String,
         ctx: NoDebug<NodeType>,
     },
 
-    #[error("the given key `{key}` does not exist in inputs of {ctx}")]
     NodeInputNotFound {
         key: String,
         ctx: NoDebug<NodeType>,
     },
 
-    #[error("Tried to clone `{ty}` that doesn't implement `core.Clone`")]
     DoesNotImplementClone {
         ty: types::Type,
         ctx: NoDebug<Node>,
     },
 
-    #[error("Tried to disconnect type `{ty}` from `{ctx}` that doesn't implement `core.Drop`")]
     DoesNotImplementDrop {
         ty: types::Type,
         ctx: NoDebug<In>,
     },
 
-    #[error("Right hand side of implies expression is not legal: `{rhs}`")]
     ImpliesRhsIsNotLegal {
         rhs: types::Type,
     },
 
-    #[error("Left hand side of implies expression is not legal: `{lhs}`")]
     ImpliesLhsIsNotLegal {
         lhs: types::Type,
     },
 
-    #[error(transparent)]
-    TypeError(#[from] types::TypeError)
+    TypeError(types::TypeError)
+}
+
+impl From<types::TypeError> for IrError {
+    fn from(value: types::TypeError) -> Self {
+        Self::TypeError(value)
+    }
+}
+
+impl std::fmt::Display for IrError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IrError::CannotConnectBetweenMismatchingTypes { from, to } => write!(f, "cannot connect `{from}` to input port `{to}` of different type"),
+            IrError::AlreadyConnected { port } => write!(f, "input port `{port}` is already connected to somewhere. cannot assign using try_connect"),
+            IrError::NotFullyTypeInferred { ctx: _ } => write!(f, "not all node outputs had types inferred"),
+            IrError::NodeOutputNotFound { key, ctx } => write!(f, "the given key `{key}` does not exist in outputs of {ctx}"),
+            IrError::NodeInputNotFound { key, ctx } => write!(f, "the given key `{key}` does not exist in inputs of {ctx}"),
+            IrError::DoesNotImplementClone { ty, ctx: _ } => write!(f, "Tried to clone `{ty}` that doesn't implement `core.Clone`"),
+            IrError::DoesNotImplementDrop { ty, ctx } => write!(f, "Tried to disconnect type `{ty}` from `{ctx}` that doesn't implement `core.Drop`"),
+            IrError::ImpliesRhsIsNotLegal { rhs } => write!(f, "Right hand side of implies expression is not legal: `{rhs}`"),
+            IrError::ImpliesLhsIsNotLegal { lhs } => write!(f, "Left hand side of implies expression is not legal: `{lhs}`"),
+            IrError::TypeError(type_error) => write!(f, "{type_error}"),
+        }
+    }
 }
 
 pub struct DialectRegistry {
