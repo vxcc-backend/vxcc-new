@@ -66,8 +66,8 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
         });
 
     let member_spec = choice((
-        type_decl,
         type_implies,
+        type_decl,
     ));
 
     exact_ident("dialect")
@@ -109,24 +109,41 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                                 let gn = format!("DialectType__{}", name);
                                 let gn = Ident::new(gn.as_str(), Span::call_site());
 
+                                let gnb = format!("DialectTypeBuilder__{}", name);
+                                let gnb = Ident::new(gnb.as_str(), Span::call_site());
+
                                 let tbn = format!("type__{}", name);
                                 let tbn = Ident::new(tbn.as_str(), Span::call_site());
 
                                 let mut args = TokenStream::new();
+                                let mut gnb_args = TokenStream::new();
+                                let mut gnb_init_args = TokenStream::new();
                                 let mut inner_type_inits = TokenStream::new();
                                 let mut inner_struct_inits = TokenStream::new();
 
                                 for oarg in ground_ars {
-                                    let arg = format!("arg__{}", oarg);
+                                    let oarg_fmt = Ident::new(oarg.as_str(), Span::call_site());
+
+                                    let arg = format!("arg__{}__{}", name, oarg);
                                     let arg = Ident::new(arg.as_str(), Span::call_site());
                                     args = quote! {
                                         #args
                                         pub #arg: ::vxcc_ir::types::GroundArgRef,
                                     };
 
+                                    gnb_args = quote! {
+                                        #gnb_args
+                                        pub #oarg_fmt: ::vxcc_ir::types::Type,
+                                    };
+
+                                    gnb_init_args = quote! {
+                                        #gnb_init_args
+                                        ( DIALECT.types.#nameid.#arg.clone() , self.#oarg_fmt ),
+                                    };
+
                                     inner_type_inits = quote! {
                                         #inner_type_inits
-                                        let #arg = #tbn.ground_arg(#oarg).unwrap();
+                                        let #arg = #tbn.ground_arg(&#oarg).unwrap();
                                     };
 
                                     inner_struct_inits = quote! {
@@ -141,6 +158,21 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                                     pub struct #gn {
                                         pub ty: ::vxcc_ir::types::TypeVar,
                                         #args
+                                    }
+
+                                    pub struct #gnb {
+                                        #gnb_args
+                                    }
+
+                                    impl #gnb {
+                                        pub fn build(self) -> ::vxcc_ir::types::Type {
+                                            unsafe {
+                                                ::vxcc_ir::types::Type::ground_kv(
+                                                    &DIALECT.types.#nameid.ty,
+                                                    [#gnb_init_args].into_iter()
+                                                    ).unwrap_unchecked()
+                                            }
+                                        }
                                     }
                                 };
 
@@ -191,22 +223,22 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                     MemberSpec::Implies { lhs, rhs } => {
                         types_init_builder = quote! {
                             #types_init_builder
-                            builder.add_implies(#lhs, #rhs);
+                            builder.add_implies(#lhs, #rhs).unwrap();
                         };
 
                         TokenStream::new()
                     }
                 }).collect::<TokenStream>();
 
-            quote! { mod #nmod {
+            quote! {
+                #[allow(non_snake_case, non_camel_case_types, dead_code, unused_variables)]
+            mod #nmod {
                 #builders
 
-                #[allow(non_snake_case)]
                 pub struct DialectTypes {
                     #members_typestruct
                 }
 
-                #[allow(non_snake_case)]
                 pub struct DialectNodes {
 
                 }
@@ -218,8 +250,9 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                     pub nodes: DialectNodes,
                 }
 
-                #[allow(non_snake_case)]
                 fn create() -> Dialect {
+                    use super::#nmod as vxcc___dialect;
+
                     let mut builder = ::vxcc_ir::DialectBuilder::new(#n);
 
                     let Clone = builder.add_type("Clone");
