@@ -1,10 +1,8 @@
-extern crate proc_macro;
-
-use chumsky::{prelude::*, input::Stream};
+use chumsky::prelude::*;
 use chumsky_proc_macro::*;
 use quote::quote;
 
-fn type_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::IntoIter<TokenTreeWrapper>>, proc_macro2::TokenStream, chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>>
+pub fn type_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::IntoIter<TokenTreeWrapper>>, proc_macro2::TokenStream, chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>>
 {
     recursive::<_, _, chumsky::extra::Err<Rich<'src, _>>, _, _>(|typ| {
 
@@ -84,16 +82,4 @@ fn type_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::Int
 
         o
     })
-}
-
-#[proc_macro]
-pub fn ty(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = proc_macro2::TokenStream::from(input);
-
-    let v = type_parser()
-        .parse(Stream::from_iter(input.into_iter().map(|x| TokenTreeWrapper(x)).collect::<Vec<_>>().into_iter()))
-        .into_result()
-        .unwrap();
-
-    v.into()
 }

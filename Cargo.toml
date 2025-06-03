@@ -2,5 +2,7 @@
 resolver = "3"
 members = [
     "crates/vxcc-ir",
-    "crates/vxcc-type-parser"
+    "crates/vxcc-type-parser",
+    "crates/vxcc-type-parser-proc",
+    "crates/vxcc-dialect-parser"
 ]

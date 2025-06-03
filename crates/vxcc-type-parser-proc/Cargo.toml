@@ -1,0 +1,17 @@
+[package]
+name = "vxcc-type-parser-proc"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+chumsky = "0.10.1"
+chumsky-proc-macro = "0.1.5"
+vxcc-type-parser = { path = "../vxcc-type-parser/" }
+
+[dev-dependencies]
+vxcc-ir = { path = "../vxcc-ir/" }

@@ -1,4 +1,4 @@
-use vxcc_type_parser::*;
+use vxcc_type_parser_proc::*;
 use vxcc_ir::vxcc_core_dialect;
 
 #[test]

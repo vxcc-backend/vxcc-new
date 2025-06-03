@@ -79,6 +79,8 @@ pub trait CustomTypeError: std::fmt::Display + std::fmt::Debug {}
 
 /// the Eq trait does not need to match, and instead only checks strict equaity.
 pub trait CustomTypeInner: std::fmt::Display + Any + Send + Sync + TryQuote {
+    fn as_any(&self) -> &dyn Any;
+
     /// only ever gets called when the other side is the same impl
     fn unify(&self, self_repr: &CustomType, other: &CustomType) -> Result<Type, Box<dyn CustomTypeError>>;
 
@@ -97,6 +99,10 @@ pub trait SimpleCustomType: Sized + Hash + std::fmt::Display + Send + Sync + Try
 
 impl<T: 'static + SimpleCustomType> CustomTypeInner for T 
 {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn unify(&self, self_repr: &CustomType, other: &CustomType) -> Result<Type, Box<dyn CustomTypeError>> {
         self.unify(other.try_cast_to().unwrap())
             .map_err(|x| Box::new(x) as Box<dyn CustomTypeError>)
@@ -162,7 +168,7 @@ impl CustomType {
     }
 
     pub fn try_cast_to<T: CustomTypeInner>(&self) -> Option<&T> {
-        (self.get_inner() as &dyn Any).downcast_ref()
+        self.get_inner().as_any().downcast_ref()
     }
 
     fn unify(&self, other: &Self) -> Result<Type, TypeError> {

@@ -116,6 +116,11 @@ impl DialectRegistry {
     }
 }
 
+pub struct DialectDep {
+    pub optional: bool,
+    pub name: String,
+}
+
 pub struct DialectBuilder(DialectRef);
 
 impl DialectBuilder {

@@ -1,11 +1,19 @@
 [package]
-name = "vxcc-type-parser"
+name = "vxcc-dialect-parser"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+proc-macro = true
+
 [dependencies]
 vxcc-ir = { path = "../vxcc-ir", features = ["quote"] }
+vxcc-type-parser = { path = "../vxcc-type-parser/" }
+
 proc-macro2 = "1.0.95"
 quote = "1.0.40"
 chumsky = "0.10.1"
 chumsky-proc-macro = "0.1.5"
+
+[dev-dependencies]
+lazy_static = "1.5.0"
