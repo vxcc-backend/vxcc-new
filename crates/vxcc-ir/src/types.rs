@@ -478,9 +478,7 @@ impl From<TypeImpl> for Type {
     }
 }
 
-lazy_static::lazy_static! {
-    static ref DENORM_LUT: Mutex<HashMap<TypeVar, Vec<(Type, Type)>>> = Mutex::new(HashMap::new());
-}
+static DENORM_LUT: LazyLock<Mutex<HashMap<TypeVar, Vec<(Type, Type)>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug)]
 pub struct CustomTypeErrorWrapper {

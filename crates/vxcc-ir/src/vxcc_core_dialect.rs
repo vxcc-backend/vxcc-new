@@ -27,6 +27,4 @@ fn create() -> CoreDialect {
     }
 }
 
-lazy_static::lazy_static! {
-    pub static ref DIALECT: CoreDialect = create();
-}
+pub static DIALECT: LazyLock<CoreDialect> = LazyLock::new(create);

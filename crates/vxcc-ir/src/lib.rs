@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::{Arc, Mutex}};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::{Arc, LazyLock, Mutex}};
 use itertools::Itertools;
 
 pub mod types;
@@ -93,9 +93,7 @@ impl DialectRegistry {
     }
 
     fn get() -> std::sync::MutexGuard<'static, Self> {
-        lazy_static::lazy_static! {
-            static ref REGISTRY: Mutex<DialectRegistry> = Mutex::new(DialectRegistry::new());
-        }
+        static REGISTRY: LazyLock<Mutex<DialectRegistry>> = LazyLock::new(|| Mutex::new(DialectRegistry::new()));
 
         REGISTRY.lock().unwrap()
     }

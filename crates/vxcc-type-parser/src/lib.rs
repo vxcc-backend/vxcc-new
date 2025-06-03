@@ -1,8 +1,9 @@
 use chumsky::prelude::*;
 use chumsky_proc_macro::*;
 use quote::quote;
+use nostd::prelude::*;
 
-pub fn type_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::IntoIter<TokenTreeWrapper>>, proc_macro2::TokenStream, chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>>
+pub fn type_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<vec::IntoIter<TokenTreeWrapper>>, proc_macro2::TokenStream, chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>>
 {
     recursive::<_, _, chumsky::extra::Err<Rich<'src, _>>, _, _>(|typ| {
 

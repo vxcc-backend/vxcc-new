@@ -3,9 +3,13 @@ name = "vxcc-type-parser"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["std"]
+std = ["chumsky/std", "chumsky-proc-macro/std", "nostd/std"]
+
 [dependencies]
-vxcc-ir = { path = "../vxcc-ir", features = ["quote"] }
 proc-macro2 = "1.0.95"
+chumsky = { version = "^0.10.0", default-features = false }
+chumsky-proc-macro = { version = "0.1.6", default-features = false }
+nostd = "^0.1.3"
 quote = "1.0.40"
-chumsky = "0.10.1"
-chumsky-proc-macro = "0.1.5"

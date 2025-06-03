@@ -241,9 +241,7 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                     }
                 }
 
-                ::lazy_static::lazy_static! {
-                    pub static ref DIALECT: Dialect = create();
-                }
+                pub static DIALECT: ::std::sync::LazyLock<Dialect> = ::std::sync::LazyLock::new(create);
             } }
         })
 }

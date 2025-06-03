@@ -9,8 +9,8 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1.0.95"
 quote = "1.0.40"
-chumsky = "0.10.1"
-chumsky-proc-macro = "0.1.5"
+chumsky = { version = "^0.10.0", default-features = false, features = ["std"] }
+chumsky-proc-macro = "0.1.6"
 vxcc-type-parser = { path = "../vxcc-type-parser/" }
 
 [dev-dependencies]
