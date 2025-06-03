@@ -28,7 +28,6 @@ impl quote::ToTokens for TokenStreamWrapper {
 
 fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::IntoIter<TokenTreeWrapper>>, proc_macro2::TokenStream, chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>>
 {
-    #[non_exhaustive]
     enum MemberSpec {
         TypeDecl {
             name: String,
@@ -38,6 +37,13 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
         Implies {
             lhs: TokenStream,
             rhs: TokenStream,
+        },
+
+        Node {
+            name: String,
+            inputs: Vec<(String, TokenStream)>,
+            outputs: Vec<(String, Option<TokenStream>)>,
+            infer_func: Option<Ident>
         }
     }
 
@@ -65,9 +71,35 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
             rhs,
         });
 
+    let node_decl = exact_ident("node")
+        .ignore_then(ident())
+        .then_ignore(exact_ident("ins"))
+        .then(ident()
+            .then_ignore(punct(':'))
+            .then(type_parser())
+            .separated_by(punct(','))
+            .collect::<Vec<(String, TokenStream)>>())
+        .then_ignore(exact_ident("outs"))
+        .then(ident()
+            .then(punct(':')
+                .ignore_then(type_parser())
+                .or_not())
+            .separated_by(punct(','))
+            .collect::<Vec<(String, Option<TokenStream>)>>())
+        .then(exact_ident("infer")
+            .ignore_then(punct('#'))
+            .ignore_then(ident())
+            .map(|x| Ident::new(x.as_str(), Span::call_site()))
+            .or_not())
+        .map(|(((name, inputs), outputs), infer_func)|
+            MemberSpec::Node {
+                name, inputs, outputs, infer_func
+            });
+
     let member_spec = choice((
         type_implies,
         type_decl,
+        node_decl,
     ));
 
     exact_ident("dialect")
@@ -80,7 +112,7 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                       let o = o.is_some();
                       quote! { vxcc_ir::DialectDep { optional: #o, name: #n.to_string() } , }
                   })
-                  .repeated()
+                  .separated_by(punct(','))
                   .collect::<TokenStreamWrapper>())
             .or_not())
         .then_ignore(punct(';'))
@@ -101,6 +133,11 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
             let members_typestruct = members
                 .iter()
                 .flat_map(|spec| match spec {
+                    MemberSpec::Node { name, inputs, outputs, infer_func } => {
+                        todo!();
+                        TokenStream::new()
+                    }
+
                     MemberSpec::TypeDecl { name, ground_ars } => {
                         let nameid = Ident::new(name.as_str(), Span::call_site());
 
@@ -228,6 +265,8 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
 
                         TokenStream::new()
                     }
+
+
                 }).collect::<TokenStream>();
 
             quote! {
