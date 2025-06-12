@@ -9,7 +9,7 @@ quote = ["dep:quote", "dep:proc-macro2"]
 
 [dependencies]
 itertools = { version = "0.14.0", default-features = false, features = ["use_std"] }
-quid = { version = "^0.1.1", default-features = false, features = ["fmt", "std"] }
+quid = { version = "^0.1.2", default-features = false, features = ["fmt", "std", "stable"] }
 
 quote = { version = "1.0.40", optional = true }
 proc-macro2 = { version = "1.0.95", optional = true }

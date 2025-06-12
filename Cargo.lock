@@ -105,9 +105,9 @@ dependencies = [
 
 [[package]]
 name = "quid"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3085d027602338560fb827ba7f5aa019ef51c608abe67fa544e01e6ed1018d9e"
+checksum = "1c0ffa54a3bfa112dcc159c84b9be2767e3410aa96179fd78bd6626e12e61e00"
 dependencies = [
  "nostd",
 ]

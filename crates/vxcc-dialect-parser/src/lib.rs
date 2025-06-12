@@ -134,7 +134,69 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                 .iter()
                 .flat_map(|spec| match spec {
                     MemberSpec::Node { name, inputs, outputs, infer_func } => {
-                        todo!();
+                        let gn = format!("DialectNode__{}", name);
+                        let gn = Ident::new(gn.as_str(), Span::call_site());
+
+                        let gn_ins = inputs
+                            .iter()
+                            .flat_map(|(k,_)| {
+                                let kn = format!("in__{}", k);
+                                let kn = Ident::new(kn.as_str(), Span::call_site());
+                                quote! { pub #kn: ::vxcc_ir::NodePortVecIdx, }
+                            })
+                            .collect::<TokenStream>();
+
+                        let gn_outs = outputs
+                            .iter()
+                            .flat_map(|(k,_)| {
+                                let kn = format!("out__{}", k);
+                                let kn = Ident::new(kn.as_str(), Span::call_site());
+                                quote! { pub #kn: ::vxcc_ir::NodePortVecIdx, }
+                            })
+                            .collect::<TokenStream>();
+
+                        builders = quote! {
+                            #builders
+
+                            pub struct #gn {
+                                pub ty: ::vxcc_ir::NodeType,
+                                #gn_ins
+                                #gn_outs
+                            }
+                        };
+
+                        let gnb = format!("DialectNodeBuilder__{}", name);
+                        let gnb = Ident::new(gnb.as_str(), Span::call_site());
+
+                        let gnb_ins = inputs
+                            .iter()
+                            .flat_map(|(k,_)| {
+                                let kn = Ident::new(k.as_str(), Span::call_site());
+                                quote! { pub #kn: ::vxcc_ir::Out, }
+                            })
+                            .collect::<TokenStream>();
+
+                        builders = quote! {
+                            #builders
+
+                            pub struct #gnb {
+                                #gnb_ins
+                            }
+
+                            impl #gnb {
+                                pub fn build(self) -> ::vxcc_ir::Node { // TODO: return struct
+                                                                        // specific to this node
+                                                                        // type instead
+                                    // TODO: implement
+                                    todo!()
+                                }
+                            }
+                        };
+
+                        // TODO: add to dialect struct, and add initializers
+
+                        // TODO: codegen infer function
+
                         TokenStream::new()
                     }
 

@@ -7,7 +7,7 @@ pub mod vxcc_core_dialect;
 #[cfg(test)]
 mod types_tests;
 
-type NodePortVecIdx = u8;
+pub type NodePortVecIdx = u8;
 pub type NodeUID = quid::UID;
 type NodeTypeUID = quid::UID;
 
@@ -139,6 +139,7 @@ impl DialectBuilder {
         DialectBuilder(DialectRef::new(Dialect {
             name: name.to_string(),
             types: Mutex::new(RefCell::new(HashMap::new())),
+            node_types: Mutex::new(RefCell::new(HashMap::new())),
         }))
     }
 
@@ -190,11 +191,51 @@ impl DialectBuilder {
 
         Ok(())
     }
+
+    pub fn add_node_type<NS, AN, ON, AI, OI>(
+        &mut self,
+        name: NS,
+        infer: Box<dyn NodeOutTypeInfer + Send + Sync>,
+        args: AI,
+        outs: OI,
+    ) -> Result<NodeType, IrError>
+    where
+        NS: AsRef<str>,
+        AN: AsRef<str>,
+        ON: AsRef<str>,
+        AI: Iterator<Item = (AN, types::Type)>,
+        OI: Iterator<Item = ON>
+    {
+        let ty = NodeTypeImpl {
+            runtime_uid: quid::UID::new(),
+            dialect: self.0.clone(),
+            input_lookup: args
+                .enumerate()
+                .map(|(i,(n,t))| (n.as_ref().to_string(), (i as NodePortVecIdx, t)))
+                .collect(),
+            output_lookup: outs
+                .enumerate()
+                .map(|(i,v)| (v.as_ref().to_string(), i as NodePortVecIdx))
+                .collect(),
+            infer,
+            name: name.as_ref().to_string(),
+        };
+        let ty = NodeType::new(ty);
+
+        self.0.node_types.lock().unwrap()
+            .borrow_mut()
+            .insert(name.as_ref().to_string(), ty.clone());
+
+        Ok(ty)
+    }
 }
 
 pub struct Dialect {
     name: String,
+    // mutex here is useless but DialectBuilder needs it and I don't want to waste time figureing
+    // out how to fix
     types: Mutex<RefCell<HashMap<String, types::TypeVar>>>,
+    node_types: Mutex<RefCell<HashMap<String, NodeType>>>
 }
 
 impl PartialEq for Dialect {
@@ -211,8 +252,13 @@ impl Dialect {
     }
 
     /// you should avoid this
-    pub fn find_type(&self, name: &str) -> Option<types::TypeVar> {
-        self.types.lock().unwrap().borrow().get(name).cloned()
+    pub fn find_type<S: AsRef<str>>(&self, name: S) -> Option<types::TypeVar> {
+        self.types.lock().unwrap().borrow().get(name.as_ref()).cloned()
+    }
+
+    /// you should avoid this
+    pub fn find_node_type<S: AsRef<str>>(&self, name: S) -> Option<NodeType> {
+        self.node_types.lock().unwrap().borrow().get(name.as_ref()).cloned()
     }
 }
 
