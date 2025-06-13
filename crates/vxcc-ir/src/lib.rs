@@ -476,19 +476,13 @@ impl Node {
     /// reference to a output port
     pub fn port_out(&self, name: &str) -> Option<Out> {
         self.0.borrow().typ._lookup_output(name)
-            .map(|x| Out {
-                node: self.clone(),
-                idx: x,
-            })
+            .map(|x| unsafe { Out::new(self.clone(), x) })
     }
 
     /// reference to a input port
     pub fn port_in(&self, name: &str) -> Option<In> {
         self.0.borrow().typ._lookup_input(name)
-            .map(|x| In {
-                node: self.clone(),
-                idx: x,
-            })
+            .map(|x| unsafe { In::new(self.clone(), x) })
     }
 
     fn ensure_inferred(&self) -> Result<(), IrError> {
@@ -527,6 +521,13 @@ impl std::fmt::Display for Out {
 }
 
 impl Out {
+    pub unsafe fn new(node: Node, idx: NodePortVecIdx) -> Self {
+        Self {
+            node,
+            idx
+        }
+    }
+
     /// slow
     pub fn get_port_name(&self) -> String {
         self.get_node().get_type()
@@ -543,10 +544,12 @@ impl Out {
     ///
     /// changes during iteration don't apply to this iterator
     pub fn find_reference_ports(&self) -> impl Iterator<Item = In> {
-        self.node.0.borrow()
-            .outputs[self.idx as usize]
-            .0
-            .clone().into_iter()
+        unsafe {
+            self.node.0.borrow()
+                .outputs.get_unchecked(self.idx as usize)
+                .0
+                .clone().into_iter()
+        }
     }
 
     /// find other nodes that use this output port as input
@@ -578,11 +581,13 @@ impl Out {
     pub fn get_type(&self) -> Result<types::Type, IrError> {
         self.get_node().ensure_inferred()?;
 
-        Ok(self.node.0.borrow()
-            .outputs[self.idx as usize]
-            .1.clone()
-            .unwrap()  // ensure_inferred already throws error if not inferred
-            )
+        unsafe {
+            Ok(self.node.0.borrow()
+                .outputs.get_unchecked(self.idx as usize)
+                .1.clone()
+                .unwrap_unchecked()  // ensure_inferred already throws error if not inferred
+                )
+        }
     }
 
     /// connects this output to the given input
@@ -610,8 +615,10 @@ impl Out {
         }
 
         rhs.unchecked_disconnect();
-        rhs.node.0.borrow_mut()
-            .inputs[rhs.idx as usize] = Some(self.clone());
+        unsafe {
+            *rhs.node.0.borrow_mut()
+                .inputs.get_unchecked_mut(rhs.idx as usize) = Some(self.clone());
+        }
         rhs.get_node().0.borrow_mut().inferred = false;
         Ok(())
     }
@@ -635,6 +642,13 @@ impl std::fmt::Display for In {
 }
 
 impl In {
+    pub unsafe fn new(node: Node, idx: NodePortVecIdx) -> Self {
+        Self {
+            node,
+            idx,
+        }
+    }
+
     /// slow
     pub fn get_port_name(&self) -> String {
         self.get_node().get_type()
@@ -662,12 +676,14 @@ impl In {
 
     fn unchecked_disconnect(&self) {
         if let Some(ref_port) = self.find_reference_port() {
-            self.node.0.borrow_mut()
-                .inputs[self.idx as usize] = None;
+            unsafe {
+                *self.node.0.borrow_mut()
+                    .inputs.get_unchecked_mut(self.idx as usize) = None;
+            }
 
             let node = ref_port.get_node();
             let mut node = node.0.borrow_mut();
-            let vec = &mut node.outputs[ref_port.idx as usize].0;
+            let vec = unsafe { &mut node.outputs.get_unchecked_mut(ref_port.idx as usize).0 };
             let idx = vec.iter().position(|x| x == self).unwrap();
             vec.remove(idx);
         }
@@ -679,8 +695,10 @@ impl In {
 
     /// find the output port that connect to this input port
     pub fn find_reference_port(&self) -> Option<Out> {
-        self.node.0.borrow()
-            .inputs[self.idx as usize]
-            .clone()
+        unsafe {
+            self.node.0.borrow()
+                .inputs.get_unchecked(self.idx as usize)
+                .clone()
+        }
     }
 }

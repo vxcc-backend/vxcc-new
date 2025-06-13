@@ -128,12 +128,16 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
 
             let mut builders = TokenStream::new();
             let mut types_init_struct = TokenStream::new();
+            let mut nodes_init_struct = TokenStream::new();
             let mut types_init_builder = TokenStream::new();
+            let mut members_nodestruct = TokenStream::new();
 
             let members_typestruct = members
                 .iter()
                 .flat_map(|spec| match spec {
                     MemberSpec::Node { name, inputs, outputs, infer_func } => {
+                        let name_id = Ident::new(name.as_str(), Span::call_site());
+
                         let gn = format!("DialectNode__{}", name);
                         let gn = Ident::new(gn.as_str(), Span::call_site());
 
@@ -176,6 +180,9 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                             })
                             .collect::<TokenStream>();
 
+                        let gna = format!("DialectNode__{}", name);
+                        let gna = Ident::new(gna.as_str(), Span::call_site());
+
                         builders = quote! {
                             #builders
 
@@ -184,16 +191,122 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                             }
 
                             impl #gnb {
-                                pub fn build(self) -> ::vxcc_ir::Node { // TODO: return struct
-                                                                        // specific to this node
-                                                                        // type instead
+                                pub fn build(self) -> #gna {
                                     // TODO: implement
-                                    todo!()
+                                    #gna { nd }
                                 }
                             }
                         };
 
-                        // TODO: add to dialect struct, and add initializers
+                        let gna_ins = inputs.iter()
+                            .flat_map(|(name, _)| {
+                                let argid = format!("in__{}", name);
+                                let argid = Ident::new(argid.as_str(), Span::call_site());
+
+                                quote! {
+                                    pub fn #name_id(&self) -> ::vxcc_ir::In {
+                                        unsafe {
+                                            ::vxcc_ir::In::new(self.node(), DIALECT.nodes.#name_id.#argid)
+                                        }
+                                    }
+                                }
+                            })
+                            .collect::<TokenStream>();
+
+                        let gna_outs = inputs.iter()
+                            .flat_map(|(name, _)| {
+                                let argid = format!("out__{}", name);
+                                let argid = Ident::new(argid.as_str(), Span::call_site());
+
+                                quote! {
+                                    pub fn #name_id(&self) -> ::vxcc_ir::Out {
+                                        unsafe {
+                                            ::vxcc_ir::Out::new(self.node(), DIALECT.nodes.#name_id.#argid)
+                                        }
+                                    }
+                                }
+                            })
+                            .collect::<TokenStream>();
+
+                        builders = quote! {
+                            #builders
+
+                            pub struct #gna {
+                                nd: ::vxcc_ir::Node,
+                            }
+
+                            impl #gna {
+                                pub fn node(&self) -> ::vxcc_ir::Node {
+                                    self.nd.clone()
+                                }
+
+                                #gna_ins
+                                #gna_outs
+                            }
+
+                            impl TryFrom<::vxcc_ir::Node> for #gna {
+                                type Result = ();
+
+                                pub fn try_from(node: ::vxcc_ir::Node) -> Result<#gna, Self::Result> {
+                                    if node.get_type() != DIALECT.nodes.#name_id.ty {
+                                        Err(())
+                                    } else {
+                                        Ok(#gna { node })
+                                    }
+                                }
+                            }
+                        };
+
+                        members_nodestruct = quote! {
+                            #members_nodestruct
+                            pub #name_id: #gn,
+                        };
+
+                        let nd_name_id = format!("nd__{}", name_id);
+                        let nd_name_id = Ident::new(nd_name_id.as_str(), Span::call_site());
+
+                        let init_ins = inputs.iter()
+                            .flat_map(|(name,ty)| quote! { (#name,#ty), })
+                            .collect::<TokenStream>();
+
+                        let init_outs = outputs.iter()
+                            .flat_map(|(name,_)| quote! { #name, })
+                            .collect::<TokenStream>();
+
+                        types_init_builder = quote! {
+                            #types_init_builder
+                            let #nd_name_id = builder.add_node_type(#name,
+                                                                        TODO /* infer func*/,
+                                                                        [#init_ins].into_iter(),
+                                                                        [#init_outs].into_iter());
+                        };
+
+                        let initstruct_ins = inputs.iter()
+                            .enumerate()
+                            .flat_map(|(idx, (name,_))| {
+                                let argid = format!("in__{}", name);
+                                let argid = Ident::new(argid.as_str(), Span::call_site());
+                                quote! { #argid: #idx, }
+                            })
+                            .collect::<TokenStream>();
+
+                        let initstruct_outs = outputs.iter()
+                            .enumerate()
+                            .flat_map(|(idx, (name,_))| {
+                                let argid = format!("out__{}", name);
+                                let argid = Ident::new(argid.as_str(), Span::call_site());
+                                quote! { #argid: #idx, }
+                            })
+                            .collect::<TokenStream>();
+
+                        nodes_init_struct = quote! {
+                            #nodes_init_struct
+                            #name_id: #gn {
+                                ty: #nd_name_id,
+                                #initstruct_ins
+                                #initstruct_outs
+                            }
+                        };
 
                         // TODO: codegen infer function
 
@@ -341,7 +454,7 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                 }
 
                 pub struct DialectNodes {
-
+                    #members_nodestruct
                 }
 
                 pub struct Dialect {
@@ -370,7 +483,7 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                             #types_init_struct
                         },
                         nodes: DialectNodes {
-
+                            #nodes_init_struct
                         }
                     }
                 }
