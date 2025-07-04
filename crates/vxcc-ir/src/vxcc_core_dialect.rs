@@ -21,9 +21,7 @@ fn create() -> CoreDialect {
     let own = builder.build();
     CoreDialect {
         dialect: own.get_dialect(),
-        types: CoreTypes {
-            Clone, Drop
-        }
+        types: CoreTypes { Clone, Drop },
     }
 }
 

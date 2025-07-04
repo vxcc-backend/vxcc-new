@@ -13,12 +13,14 @@ dialect! {
 
     type Vec { elt: ?e } => Iter { elt: ?elt };
 
-    /*
-    node add
-        ins
-            a: U8,
-            b: U8
-        outs
-            res: U8
-        ;*/
 }
+/*
+
+   node add
+       ins
+           a: U8,
+           b: U8
+       outs
+           res: U8
+       ;
+*/

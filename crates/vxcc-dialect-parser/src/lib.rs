@@ -1,9 +1,9 @@
 extern crate proc_macro;
 
-use chumsky::{prelude::*, input::Stream};
+use chumsky::{input::Stream, prelude::*};
 use chumsky_proc_macro::*;
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
-use proc_macro2::{TokenStream, Ident, Span};
 use vxcc_type_parser::*;
 
 struct TokenStreamWrapper(TokenStream);
@@ -26,8 +26,12 @@ impl quote::ToTokens for TokenStreamWrapper {
     }
 }
 
-fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::IntoIter<TokenTreeWrapper>>, proc_macro2::TokenStream, chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>>
-{
+fn dialect_parser<'src>() -> impl Parser<
+    'src,
+    chumsky::input::Stream<std::vec::IntoIter<TokenTreeWrapper>>,
+    proc_macro2::TokenStream,
+    chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>,
+> {
     enum MemberSpec {
         TypeDecl {
             name: String,
@@ -43,64 +47,62 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
             name: String,
             inputs: Vec<(String, TokenStream)>,
             outputs: Vec<(String, Option<TokenStream>)>,
-            infer_func: Option<Ident>
-        }
+            infer_func: Option<Ident>,
+        },
     }
 
     // TODO: ensure no double underscores in idents
 
     let type_decl = exact_ident("type")
         .ignore_then(ident())
-        .then(ident::<_, chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>>()
-              .separated_by(punct(','))
-              .at_least(1)
-              .collect::<Vec<_>>()
-              .grouped(GroupDelim::Brace)
-              .or_not())
-        .map(|(name, ground_ars)| MemberSpec::TypeDecl {
-            name,
-            ground_ars
-        });
+        .then(
+            ident::<_, chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>>()
+                .separated_by(punct(','))
+                .at_least(1)
+                .collect::<Vec<_>>()
+                .grouped(GroupDelim::Brace)
+                .or_not(),
+        )
+        .map(|(name, ground_ars)| MemberSpec::TypeDecl { name, ground_ars });
 
     let type_implies = exact_ident("type")
         .ignore_then(type_parser())
         .then_ignore(punct_seq("=>"))
         .then(type_parser())
-        .map(|(lhs, rhs)| MemberSpec::Implies {
-            lhs,
-            rhs,
-        });
+        .map(|(lhs, rhs)| MemberSpec::Implies { lhs, rhs });
 
     let node_decl = exact_ident("node")
         .ignore_then(ident())
         .then_ignore(exact_ident("ins"))
-        .then(ident()
-            .then_ignore(punct(':'))
-            .then(type_parser())
-            .separated_by(punct(','))
-            .collect::<Vec<(String, TokenStream)>>())
+        .then(
+            ident()
+                .then_ignore(punct(':'))
+                .then(type_parser())
+                .separated_by(punct(','))
+                .collect::<Vec<(String, TokenStream)>>(),
+        )
         .then_ignore(exact_ident("outs"))
-        .then(ident()
-            .then(punct(':')
-                .ignore_then(type_parser())
-                .or_not())
-            .separated_by(punct(','))
-            .collect::<Vec<(String, Option<TokenStream>)>>())
-        .then(exact_ident("infer")
-            .ignore_then(punct('#'))
-            .ignore_then(ident())
-            .map(|x| Ident::new(x.as_str(), Span::call_site()))
-            .or_not())
-        .map(|(((name, inputs), outputs), infer_func)|
-            MemberSpec::Node {
-                name, inputs, outputs, infer_func
-            });
+        .then(
+            ident()
+                .then(punct(':').ignore_then(type_parser()).or_not())
+                .separated_by(punct(','))
+                .collect::<Vec<(String, Option<TokenStream>)>>(),
+        )
+        .then(
+            exact_ident("infer")
+                .ignore_then(punct('#'))
+                .ignore_then(ident())
+                .map(|x| Ident::new(x.as_str(), Span::call_site()))
+                .or_not(),
+        )
+        .map(|(((name, inputs), outputs), infer_func)| MemberSpec::Node {
+            name,
+            inputs,
+            outputs,
+            infer_func,
+        });
 
-    let member_spec = choice((
-        type_implies,
-        type_decl,
-        node_decl,
-    ));
+    let member_spec = choice((type_implies, type_decl, node_decl));
 
     exact_ident("dialect")
         .ignore_then(ident())
@@ -136,6 +138,7 @@ fn dialect_parser<'src>() -> impl Parser<'src, chumsky::input::Stream<std::vec::
                 .iter()
                 .flat_map(|spec| match spec {
                     MemberSpec::Node { name, inputs, outputs, infer_func } => {
+                        // TODO: infer_func
                         let name_id = Ident::new(name.as_str(), Span::call_site());
 
                         let gn = format!("DialectNode__{}", name);
@@ -498,7 +501,13 @@ pub fn dialect(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);
 
     let v = dialect_parser()
-        .parse(Stream::from_iter(input.into_iter().map(|x| TokenTreeWrapper(x)).collect::<Vec<_>>().into_iter()))
+        .parse(Stream::from_iter(
+            input
+                .into_iter()
+                .map(|x| TokenTreeWrapper(x))
+                .collect::<Vec<_>>()
+                .into_iter(),
+        ))
         .into_result()
         .unwrap();
 

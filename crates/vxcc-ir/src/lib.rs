@@ -1,5 +1,10 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::{Arc, LazyLock, Mutex}};
 use itertools::Itertools;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::Rc,
+    sync::{Arc, LazyLock, Mutex},
+};
 
 pub mod types;
 pub mod vxcc_core_dialect;
@@ -27,48 +32,25 @@ impl<T: std::fmt::Display> std::fmt::Display for NoDebug<T> {
 
 #[derive(Debug)]
 pub enum IrError {
-    CannotConnectBetweenMismatchingTypes {
-        from: NoDebug<Out>,
-        to: NoDebug<In>
-    },
+    CannotConnectBetweenMismatchingTypes { from: NoDebug<Out>, to: NoDebug<In> },
 
-    AlreadyConnected {
-        port: NoDebug<In>,
-    },
+    AlreadyConnected { port: NoDebug<In> },
 
-    NotFullyTypeInferred {
-        ctx: NoDebug<Node>,
-    },
+    NotFullyTypeInferred { ctx: NoDebug<Node> },
 
-    NodeOutputNotFound {
-        key: String,
-        ctx: NoDebug<NodeType>,
-    },
+    NodeOutputNotFound { key: String, ctx: NoDebug<NodeType> },
 
-    NodeInputNotFound {
-        key: String,
-        ctx: NoDebug<NodeType>,
-    },
+    NodeInputNotFound { key: String, ctx: NoDebug<NodeType> },
 
-    DoesNotImplementClone {
-        ty: types::Type,
-        ctx: NoDebug<Node>,
-    },
+    DoesNotImplementClone { ty: types::Type, ctx: NoDebug<Node> },
 
-    DoesNotImplementDrop {
-        ty: types::Type,
-        ctx: NoDebug<In>,
-    },
+    DoesNotImplementDrop { ty: types::Type, ctx: NoDebug<In> },
 
-    ImpliesRhsIsNotLegal {
-        rhs: types::Type,
-    },
+    ImpliesRhsIsNotLegal { rhs: types::Type },
 
-    ImpliesLhsIsNotLegal {
-        lhs: types::Type,
-    },
+    ImpliesLhsIsNotLegal { lhs: types::Type },
 
-    TypeError(types::TypeError)
+    TypeError(types::TypeError),
 }
 
 impl From<types::TypeError> for IrError {
@@ -80,41 +62,68 @@ impl From<types::TypeError> for IrError {
 impl std::fmt::Display for IrError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            IrError::CannotConnectBetweenMismatchingTypes { from, to } => write!(f, "cannot connect `{from}` to input port `{to}` of different type"),
-            IrError::AlreadyConnected { port } => write!(f, "input port `{port}` is already connected to somewhere. cannot assign using try_connect"),
-            IrError::NotFullyTypeInferred { ctx: _ } => write!(f, "not all node outputs had types inferred"),
-            IrError::NodeOutputNotFound { key, ctx } => write!(f, "the given key `{key}` does not exist in outputs of {ctx}"),
-            IrError::NodeInputNotFound { key, ctx } => write!(f, "the given key `{key}` does not exist in inputs of {ctx}"),
-            IrError::DoesNotImplementClone { ty, ctx: _ } => write!(f, "Tried to clone `{ty}` that doesn't implement `core.Clone`"),
-            IrError::DoesNotImplementDrop { ty, ctx } => write!(f, "Tried to disconnect type `{ty}` from `{ctx}` that doesn't implement `core.Drop`"),
-            IrError::ImpliesRhsIsNotLegal { rhs } => write!(f, "Right hand side of implies expression is not legal: `{rhs}`"),
-            IrError::ImpliesLhsIsNotLegal { lhs } => write!(f, "Left hand side of implies expression is not legal: `{lhs}`"),
+            IrError::CannotConnectBetweenMismatchingTypes { from, to } => write!(
+                f,
+                "cannot connect `{from}` to input port `{to}` of different type"
+            ),
+            IrError::AlreadyConnected { port } => write!(
+                f,
+                "input port `{port}` is already connected to somewhere. cannot assign using try_connect"
+            ),
+            IrError::NotFullyTypeInferred { ctx: _ } => {
+                write!(f, "not all node outputs had types inferred")
+            }
+            IrError::NodeOutputNotFound { key, ctx } => write!(
+                f,
+                "the given key `{key}` does not exist in outputs of {ctx}"
+            ),
+            IrError::NodeInputNotFound { key, ctx } => {
+                write!(f, "the given key `{key}` does not exist in inputs of {ctx}")
+            }
+            IrError::DoesNotImplementClone { ty, ctx: _ } => write!(
+                f,
+                "Tried to clone `{ty}` that doesn't implement `core.Clone`"
+            ),
+            IrError::DoesNotImplementDrop { ty, ctx } => write!(
+                f,
+                "Tried to disconnect type `{ty}` from `{ctx}` that doesn't implement `core.Drop`"
+            ),
+            IrError::ImpliesRhsIsNotLegal { rhs } => write!(
+                f,
+                "Right hand side of implies expression is not legal: `{rhs}`"
+            ),
+            IrError::ImpliesLhsIsNotLegal { lhs } => write!(
+                f,
+                "Left hand side of implies expression is not legal: `{lhs}`"
+            ),
             IrError::TypeError(type_error) => write!(f, "{type_error}"),
         }
     }
 }
 
 pub struct DialectRegistry {
-    dialects: HashMap<String, DialectRef>
+    dialects: HashMap<String, DialectRef>,
 }
 
 impl DialectRegistry {
     fn new() -> Self {
         Self {
-            dialects: HashMap::new()
+            dialects: HashMap::new(),
         }
     }
 
     fn get() -> std::sync::MutexGuard<'static, Self> {
-        static REGISTRY: LazyLock<Mutex<DialectRegistry>> = LazyLock::new(|| Mutex::new(DialectRegistry::new()));
+        static REGISTRY: LazyLock<Mutex<DialectRegistry>> =
+            LazyLock::new(|| Mutex::new(DialectRegistry::new()));
 
         REGISTRY.lock().unwrap()
     }
 
     pub fn get_dialects() -> Vec<(String, DialectRef)> {
         Self::get()
-            .dialects.iter()
-            .map(|(k,v)| (k.as_str().to_string(), v.clone()))
+            .dialects
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), v.clone()))
             .collect()
     }
 
@@ -152,13 +161,22 @@ impl DialectBuilder {
         self.add_ground_type(name, std::iter::empty::<String>())
     }
 
-    pub fn add_ground_type<I: Iterator<Item = S>, S: AsRef<str>>(&mut self, name: &str, params: I) -> types::TypeVar {
+    pub fn add_ground_type<I: Iterator<Item = S>, S: AsRef<str>>(
+        &mut self,
+        name: &str,
+        params: I,
+    ) -> types::TypeVar {
         let t = types::TypeVar::new(types::TypeVarImpl {
             dialect: self.0.clone(),
             name: name.to_string(),
-            ground_args: params.map(|x| x.as_ref().to_string()).collect()
+            ground_args: params.map(|x| x.as_ref().to_string()).collect(),
         });
-        self.0.types.lock().unwrap().borrow_mut().insert(name.to_string(), t.clone());
+        self.0
+            .types
+            .lock()
+            .unwrap()
+            .borrow_mut()
+            .insert(name.to_string(), t.clone());
         t
     }
 
@@ -167,22 +185,16 @@ impl DialectBuilder {
     /// the right side can only be Var or Ground
     pub fn add_implies(&mut self, from: types::Type, to: types::Type) -> Result<(), IrError> {
         match &*to.0 {
-            types::TypeImpl::Any |
-            types::TypeImpl::And(_) |
-            types::TypeImpl::Unspec(_) => {
-                Err(IrError::ImpliesRhsIsNotLegal {
-                    rhs: to.clone()
-                })?;
-            },
+            types::TypeImpl::Any | types::TypeImpl::And(_) | types::TypeImpl::Unspec(_) => {
+                Err(IrError::ImpliesRhsIsNotLegal { rhs: to.clone() })?;
+            }
 
             _ => {}
         }
 
         let varlist = from.to_var_list();
         if varlist.is_empty() {
-            Err(IrError::ImpliesLhsIsNotLegal {
-                lhs: from.clone()
-            })?;
+            Err(IrError::ImpliesLhsIsNotLegal { lhs: from.clone() })?;
         }
 
         for item in varlist.into_iter() {
@@ -204,25 +216,28 @@ impl DialectBuilder {
         AN: AsRef<str>,
         ON: AsRef<str>,
         AI: Iterator<Item = (AN, types::Type)>,
-        OI: Iterator<Item = ON>
+        OI: Iterator<Item = ON>,
     {
         let ty = NodeTypeImpl {
             runtime_uid: quid::UID::new(),
             dialect: self.0.clone(),
             input_lookup: args
                 .enumerate()
-                .map(|(i,(n,t))| (n.as_ref().to_string(), (i as NodePortVecIdx, t)))
+                .map(|(i, (n, t))| (n.as_ref().to_string(), (i as NodePortVecIdx, t)))
                 .collect(),
             output_lookup: outs
                 .enumerate()
-                .map(|(i,v)| (v.as_ref().to_string(), i as NodePortVecIdx))
+                .map(|(i, v)| (v.as_ref().to_string(), i as NodePortVecIdx))
                 .collect(),
             infer,
             name: name.as_ref().to_string(),
         };
         let ty = NodeType::new(ty);
 
-        self.0.node_types.lock().unwrap()
+        self.0
+            .node_types
+            .lock()
+            .unwrap()
             .borrow_mut()
             .insert(name.as_ref().to_string(), ty.clone());
 
@@ -235,7 +250,7 @@ pub struct Dialect {
     // mutex here is useless but DialectBuilder needs it and I don't want to waste time figureing
     // out how to fix
     types: Mutex<RefCell<HashMap<String, types::TypeVar>>>,
-    node_types: Mutex<RefCell<HashMap<String, NodeType>>>
+    node_types: Mutex<RefCell<HashMap<String, NodeType>>>,
 }
 
 impl PartialEq for Dialect {
@@ -253,12 +268,22 @@ impl Dialect {
 
     /// you should avoid this
     pub fn find_type<S: AsRef<str>>(&self, name: S) -> Option<types::TypeVar> {
-        self.types.lock().unwrap().borrow().get(name.as_ref()).cloned()
+        self.types
+            .lock()
+            .unwrap()
+            .borrow()
+            .get(name.as_ref())
+            .cloned()
     }
 
     /// you should avoid this
     pub fn find_node_type<S: AsRef<str>>(&self, name: S) -> Option<NodeType> {
-        self.node_types.lock().unwrap().borrow().get(name.as_ref()).cloned()
+        self.node_types
+            .lock()
+            .unwrap()
+            .borrow()
+            .get(name.as_ref())
+            .cloned()
     }
 }
 
@@ -277,7 +302,7 @@ impl std::fmt::Display for Dialect {
 /// proof of ownership over a dialect
 #[derive(Clone)]
 pub struct DialectOwner {
-    dialect: DialectRef
+    dialect: DialectRef,
 }
 
 impl DialectOwner {
@@ -305,13 +330,13 @@ pub struct NodeOutTypeInferRes {
 // TODO: also safer put
 impl NodeOutTypeInferRes {
     fn new(node: &Node) -> Self {
-        Self {
-            node: node.clone()
-        }
+        Self { node: node.clone() }
     }
 
     pub fn set_name(&mut self, out: &str, val: types::Type) -> Result<(), IrError> {
-        let idx = self.node.get_type()
+        let idx = self
+            .node
+            .get_type()
             ._lookup_output(out)
             .ok_or(IrError::NodeOutputNotFound {
                 key: out.to_string(),
@@ -383,15 +408,17 @@ impl NodeTypeImpl {
     }
 
     pub(crate) fn _unlookup_input(&self, idx: NodePortVecIdx) -> Option<(&str, types::Type)> {
-        self.input_lookup.iter()
-            .find(|(_,(v,_))| *v == idx)
-            .map(|(a,(_,b))| (a.as_str(), b.clone()))
+        self.input_lookup
+            .iter()
+            .find(|(_, (v, _))| *v == idx)
+            .map(|(a, (_, b))| (a.as_str(), b.clone()))
     }
 
     pub(crate) fn _unlookup_output(&self, idx: NodePortVecIdx) -> Option<&str> {
-        self.output_lookup.iter()
-            .find(|(_,v)| **v == idx)
-            .map(|(k,_)| k.as_str())
+        self.output_lookup
+            .iter()
+            .find(|(_, v)| **v == idx)
+            .map(|(k, _)| k.as_str())
     }
 }
 
@@ -414,7 +441,6 @@ impl PartialEq for NodeTypeImpl {
 }
 
 pub type NodeType = Arc<NodeTypeImpl>;
-
 
 // type NodeInoutVec<T> = ArrayVec<[T; 8]>;
 type NodeInoutVec<T> = Vec<T>;
@@ -441,18 +467,20 @@ impl Node {
     pub fn new<I, S>(ty: &NodeType, inputs: I) -> Result<Self, IrError>
     where
         I: Iterator<Item = (S, Out)>,
-        S: AsRef<str>
+        S: AsRef<str>,
     {
         let mut ins = NodeInoutVec::new();
         for _ in 0..ty.num_inputs() {
             ins.push(None);
         }
 
-        for (k,v) in inputs {
-            let idx = ty._lookup_input(k.as_ref()).ok_or(IrError::NodeInputNotFound {
-                key: k.as_ref().to_string(),
-                ctx: NoDebug(ty.clone()),
-            })?;
+        for (k, v) in inputs {
+            let idx = ty
+                ._lookup_input(k.as_ref())
+                .ok_or(IrError::NodeInputNotFound {
+                    key: k.as_ref().to_string(),
+                    ctx: NoDebug(ty.clone()),
+                })?;
             ins[idx as usize] = Some(v);
         }
 
@@ -475,13 +503,19 @@ impl Node {
 
     /// reference to a output port
     pub fn port_out(&self, name: &str) -> Option<Out> {
-        self.0.borrow().typ._lookup_output(name)
+        self.0
+            .borrow()
+            .typ
+            ._lookup_output(name)
             .map(|x| unsafe { Out::new(self.clone(), x) })
     }
 
     /// reference to a input port
     pub fn port_in(&self, name: &str) -> Option<In> {
-        self.0.borrow().typ._lookup_input(name)
+        self.0
+            .borrow()
+            .typ
+            ._lookup_input(name)
             .map(|x| unsafe { In::new(self.clone(), x) })
     }
 
@@ -493,7 +527,7 @@ impl Node {
             for (_, t) in self.0.borrow().outputs.iter() {
                 if t.is_none() {
                     Err(IrError::NotFullyTypeInferred {
-                        ctx: NoDebug(self.clone())
+                        ctx: NoDebug(self.clone()),
                     })?;
                 }
             }
@@ -509,28 +543,29 @@ impl Node {
 #[derive(Clone)]
 pub struct Out {
     node: Node,
-    idx: NodePortVecIdx
+    idx: NodePortVecIdx,
 }
 
 impl std::fmt::Display for Out {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}#>{}",
+        write!(
+            f,
+            "{}#>{}",
             self.get_node().get_type(),
-            self.get_port_name())
+            self.get_port_name()
+        )
     }
 }
 
 impl Out {
     pub unsafe fn new(node: Node, idx: NodePortVecIdx) -> Self {
-        Self {
-            node,
-            idx
-        }
+        Self { node, idx }
     }
 
     /// slow
     pub fn get_port_name(&self) -> String {
-        self.get_node().get_type()
+        self.get_node()
+            .get_type()
             ._unlookup_output(self.idx)
             .unwrap()
             .to_string()
@@ -545,10 +580,14 @@ impl Out {
     /// changes during iteration don't apply to this iterator
     pub fn find_reference_ports(&self) -> impl Iterator<Item = In> {
         unsafe {
-            self.node.0.borrow()
-                .outputs.get_unchecked(self.idx as usize)
+            self.node
                 .0
-                .clone().into_iter()
+                .borrow()
+                .outputs
+                .get_unchecked(self.idx as usize)
+                .0
+                .clone()
+                .into_iter()
         }
     }
 
@@ -557,7 +596,7 @@ impl Out {
     /// changes during iteration don't apply to this iterator
     pub fn find_reference_nodes(&self) -> impl Iterator<Item = Node> {
         self.find_reference_ports()
-            .dedup_by(|a,b| a.node.get_uid() == b.node.get_uid())
+            .dedup_by(|a, b| a.node.get_uid() == b.node.get_uid())
             .map(|x| x.node)
     }
 
@@ -571,7 +610,7 @@ impl Out {
     pub fn try_connect(&self, rhs: In) -> Result<(), IrError> {
         if rhs.find_reference_port().is_some() {
             Err(IrError::AlreadyConnected {
-                port: NoDebug(rhs.clone())
+                port: NoDebug(rhs.clone()),
             })
         } else {
             self.force_connect(rhs)
@@ -582,11 +621,16 @@ impl Out {
         self.get_node().ensure_inferred()?;
 
         unsafe {
-            Ok(self.node.0.borrow()
-                .outputs.get_unchecked(self.idx as usize)
-                .1.clone()
-                .unwrap_unchecked()  // ensure_inferred already throws error if not inferred
-                )
+            Ok(
+                self.node
+                    .0
+                    .borrow()
+                    .outputs
+                    .get_unchecked(self.idx as usize)
+                    .1
+                    .clone()
+                    .unwrap_unchecked(), // ensure_inferred already throws error if not inferred
+            )
         }
     }
 
@@ -602,7 +646,7 @@ impl Out {
             if !self_ty.matches(&types::Type::var(&vxcc_core_dialect::DIALECT.types.Clone))? {
                 Err(IrError::DoesNotImplementClone {
                     ty: self_ty.clone(),
-                    ctx: NoDebug(self.get_node())
+                    ctx: NoDebug(self.get_node()),
                 })?
             }
         }
@@ -616,8 +660,11 @@ impl Out {
 
         rhs.unchecked_disconnect();
         unsafe {
-            *rhs.node.0.borrow_mut()
-                .inputs.get_unchecked_mut(rhs.idx as usize) = Some(self.clone());
+            *rhs.node
+                .0
+                .borrow_mut()
+                .inputs
+                .get_unchecked_mut(rhs.idx as usize) = Some(self.clone());
         }
         rhs.get_node().0.borrow_mut().inferred = false;
         Ok(())
@@ -630,41 +677,50 @@ impl Out {
 #[derive(Clone, PartialEq)]
 pub struct In {
     node: Node,
-    idx: NodePortVecIdx
+    idx: NodePortVecIdx,
 }
 
 impl std::fmt::Display for In {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}<#{}",
+        write!(
+            f,
+            "{}<#{}",
             self.get_node().get_type(),
-            self.get_port_name())
+            self.get_port_name()
+        )
     }
 }
 
 impl In {
     pub unsafe fn new(node: Node, idx: NodePortVecIdx) -> Self {
-        Self {
-            node,
-            idx,
-        }
+        Self { node, idx }
     }
 
     /// slow
     pub fn get_port_name(&self) -> String {
-        self.get_node().get_type()
+        self.get_node()
+            .get_type()
             ._unlookup_input(self.idx)
-            .unwrap().0.to_string()
+            .unwrap()
+            .0
+            .to_string()
     }
 
     pub fn get_type(&self) -> types::Type {
-        self.get_node().get_type()
+        self.get_node()
+            .get_type()
             ._unlookup_input(self.idx)
-            .unwrap().1.clone()
+            .unwrap()
+            .1
+            .clone()
     }
 
     /// this errors if the type doesn't implement Drop
     pub fn disconnect(&self) -> Result<(), IrError> {
-        if !self.get_type().matches(&types::Type::var(&vxcc_core_dialect::DIALECT.types.Drop))? {
+        if !self
+            .get_type()
+            .matches(&types::Type::var(&vxcc_core_dialect::DIALECT.types.Drop))?
+        {
             Err(IrError::DoesNotImplementDrop {
                 ty: self.get_type(),
                 ctx: NoDebug(self.clone()),
@@ -677,8 +733,12 @@ impl In {
     fn unchecked_disconnect(&self) {
         if let Some(ref_port) = self.find_reference_port() {
             unsafe {
-                *self.node.0.borrow_mut()
-                    .inputs.get_unchecked_mut(self.idx as usize) = None;
+                *self
+                    .node
+                    .0
+                    .borrow_mut()
+                    .inputs
+                    .get_unchecked_mut(self.idx as usize) = None;
             }
 
             let node = ref_port.get_node();
@@ -696,8 +756,11 @@ impl In {
     /// find the output port that connect to this input port
     pub fn find_reference_port(&self) -> Option<Out> {
         unsafe {
-            self.node.0.borrow()
-                .inputs.get_unchecked(self.idx as usize)
+            self.node
+                .0
+                .borrow()
+                .inputs
+                .get_unchecked(self.idx as usize)
                 .clone()
         }
     }

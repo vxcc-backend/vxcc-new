@@ -1,4 +1,4 @@
-use crate::{*, types::*};
+use crate::{types::*, *};
 
 #[test]
 fn test_simple_unify() {
@@ -8,13 +8,25 @@ fn test_simple_unify() {
     let ty_uint = Type::var(&test_dialect.add_type("UInt"));
     let _test_dialect = test_dialect.build().get_dialect();
 
-    let uni = Type::and_pair(&ty_i8, &ty_num).unwrap().unify(&ty_uint).unwrap();
-    assert!(uni.matches(&Type::and_pair(&Type::and_pair(&ty_i8, &ty_uint).unwrap(), &ty_num).unwrap()).unwrap());
+    let uni = Type::and_pair(&ty_i8, &ty_num)
+        .unwrap()
+        .unify(&ty_uint)
+        .unwrap();
+    assert!(
+        uni.matches(&Type::and_pair(&Type::and_pair(&ty_i8, &ty_uint).unwrap(), &ty_num).unwrap())
+            .unwrap()
+    );
     assert!(uni.matches(&ty_i8).unwrap());
     assert!(uni.matches(&ty_num).unwrap());
     assert!(uni.matches(&ty_uint).unwrap());
-    assert!(uni.matches(&Type::and_pair(&ty_uint, &ty_num).unwrap()).unwrap());
-    assert!(!uni.matches(&Type::var(&vxcc_core_dialect::DIALECT.types.Clone)).unwrap());
+    assert!(
+        uni.matches(&Type::and_pair(&ty_uint, &ty_num).unwrap())
+            .unwrap()
+    );
+    assert!(
+        !uni.matches(&Type::var(&vxcc_core_dialect::DIALECT.types.Clone))
+            .unwrap()
+    );
     assert!(!ty_i8.matches(&ty_num).unwrap());
 }
 
@@ -26,10 +38,7 @@ fn test_denorm_and_implies_clone() {
     let num = Type::var(&builder.add_type("Num"));
     let u64 = Type::var(&builder.add_type("U64"));
 
-    builder.add_implies(
-        u64.clone(),
-        clone.clone(),
-    ).unwrap();
+    builder.add_implies(u64.clone(), clone.clone()).unwrap();
 
     let _ = builder.build();
 
@@ -49,10 +58,12 @@ fn test_denorm_vector_implies_clone() {
     let vector_elt = vector.ground_arg("elt").unwrap();
     let u64 = Type::var(&builder.add_type("U64"));
 
-    builder.add_implies(
-        Type::ground_kv(&vector, [(vector_elt.clone(), Type::any())].into_iter()).unwrap(),
-        clone.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(&vector, [(vector_elt.clone(), Type::any())].into_iter()).unwrap(),
+            clone.clone(),
+        )
+        .unwrap();
 
     let _ = builder.build();
 
@@ -74,16 +85,20 @@ fn test_denorm_template_preserves_parameter() {
     let iterable = builder.add_ground_type("Iterable", ["elt"].into_iter());
     let iterable_elt = iterable.ground_arg("elt").unwrap();
 
-    builder.add_implies(
-        Type::ground_kv(&vector, [(vector_elt.clone(), t.clone())].into_iter()).unwrap(),
-        Type::ground_kv(&iterable, [(iterable_elt.clone(), t.clone())].into_iter()).unwrap(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(&vector, [(vector_elt.clone(), t.clone())].into_iter()).unwrap(),
+            Type::ground_kv(&iterable, [(iterable_elt.clone(), t.clone())].into_iter()).unwrap(),
+        )
+        .unwrap();
 
     let u64 = Type::var(&builder.add_type("U64"));
     let _ = builder.build();
 
-    let vec_u64 = Type::ground_kv(&vector, [(vector_elt.clone(), u64.clone())].into_iter()).unwrap();
-    let iter_u64 = Type::ground_kv(&iterable, [(iterable_elt.clone(), u64.clone())].into_iter()).unwrap();
+    let vec_u64 =
+        Type::ground_kv(&vector, [(vector_elt.clone(), u64.clone())].into_iter()).unwrap();
+    let iter_u64 =
+        Type::ground_kv(&iterable, [(iterable_elt.clone(), u64.clone())].into_iter()).unwrap();
 
     let denormed = vec_u64.denorm().unwrap();
     assert!(denormed.matches(&iter_u64).unwrap());
@@ -102,31 +117,51 @@ fn test_denorm_complex_intersection_rule() {
     let iterable = builder.add_ground_type("Iterable", ["elt"].into_iter());
     let iterable_elt = iterable.ground_arg("elt").unwrap();
 
-    builder.add_implies(
-        Type::and_pair(
-            &clone,
-            &Type::ground_kv(&vector, [(vector_elt.clone(), Type::and_pair(&t, &clone).unwrap())].into_iter()).unwrap(),
-        ).unwrap(),
-        Type::ground_kv(&iterable, [(iterable_elt.clone(), t.clone())].into_iter()).unwrap(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::and_pair(
+                &clone,
+                &Type::ground_kv(
+                    &vector,
+                    [(vector_elt.clone(), Type::and_pair(&t, &clone).unwrap())].into_iter(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            Type::ground_kv(&iterable, [(iterable_elt.clone(), t.clone())].into_iter()).unwrap(),
+        )
+        .unwrap();
 
-    builder.add_implies(
-        Type::and_pair(
-            &clone,
-            &Type::ground_kv(&vector, [(vector_elt.clone(), Type::and_pair(&t, &clone).unwrap())].into_iter()).unwrap(),
-        ).unwrap(),
-        idfk.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::and_pair(
+                &clone,
+                &Type::ground_kv(
+                    &vector,
+                    [(vector_elt.clone(), Type::and_pair(&t, &clone).unwrap())].into_iter(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            idfk.clone(),
+        )
+        .unwrap();
 
     let u64 = Type::var(&builder.add_type("U64"));
     let _ = builder.build();
 
     let input = Type::and_pair(
         &clone,
-        &Type::ground_kv(&vector, [(vector_elt.clone(), Type::and_pair(&u64, &clone).unwrap())].into_iter()).unwrap(),
-    ).unwrap();
+        &Type::ground_kv(
+            &vector,
+            [(vector_elt.clone(), Type::and_pair(&u64, &clone).unwrap())].into_iter(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
 
-    let iter_u64 = Type::ground_kv(&iterable, [(iterable_elt.clone(), u64.clone())].into_iter()).unwrap();
+    let iter_u64 =
+        Type::ground_kv(&iterable, [(iterable_elt.clone(), u64.clone())].into_iter()).unwrap();
     let denormed = input.denorm().unwrap();
 
     assert!(denormed.matches(&iter_u64).unwrap());
@@ -147,26 +182,36 @@ fn test_denorm_wrapper_clone_composite_implies() {
 
     let lhs = Type::and_pair(
         &clone,
-        &Type::ground_kv(&wrapper, [(wrapper_inner.clone(), Type::and_pair(&t, &clone).unwrap())].into_iter()).unwrap(),
-    ).unwrap();
+        &Type::ground_kv(
+            &wrapper,
+            [(wrapper_inner.clone(), Type::and_pair(&t, &clone).unwrap())].into_iter(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
 
-    builder.add_implies(
-        lhs.clone(),
-        serializable.clone(),
-    ).unwrap();
+    builder
+        .add_implies(lhs.clone(), serializable.clone())
+        .unwrap();
 
-    builder.add_implies(
-        lhs,
-        debuggable.clone(),
-    ).unwrap();
+    builder.add_implies(lhs, debuggable.clone()).unwrap();
 
     let str_ = Type::var(&builder.add_type("Str"));
     let _ = builder.build();
 
     let input = Type::and_pair(
         &clone,
-        &Type::ground_kv(&wrapper, [(wrapper_inner.clone(), Type::and_pair(&str_, &clone).unwrap())].into_iter()).unwrap(),
-    ).unwrap();
+        &Type::ground_kv(
+            &wrapper,
+            [(
+                wrapper_inner.clone(),
+                Type::and_pair(&str_, &clone).unwrap(),
+            )]
+            .into_iter(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
 
     let denormed = input.denorm().unwrap();
 
@@ -185,21 +230,33 @@ fn test_denorm_box_readable_to_decodable() {
     let box_ = builder.add_ground_type("Box", ["val"].into_iter());
     let box_val = box_.ground_arg("val").unwrap();
 
-    builder.add_implies(
-        Type::and_pair(
-            &readable,
-            &Type::ground_kv(&box_, [(box_val.clone(), Type::and_pair(&t, &readable).unwrap())].into_iter()).unwrap(),
-        ).unwrap(),
-        decodable.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::and_pair(
+                &readable,
+                &Type::ground_kv(
+                    &box_,
+                    [(box_val.clone(), Type::and_pair(&t, &readable).unwrap())].into_iter(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            decodable.clone(),
+        )
+        .unwrap();
 
     let data = Type::var(&builder.add_type("Data"));
     let _ = builder.build();
 
     let input = Type::and_pair(
         &readable,
-        &Type::ground_kv(&box_, [(box_val, Type::and_pair(&data, &readable).unwrap())].into_iter()).unwrap(),
-    ).unwrap();
+        &Type::ground_kv(
+            &box_,
+            [(box_val, Type::and_pair(&data, &readable).unwrap())].into_iter(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
 
     let denormed = input.denorm().unwrap();
 
@@ -220,16 +277,24 @@ fn test_denorm_map_equatable_to_setlike() {
     let map_key = map.ground_arg("key").unwrap();
     let map_val = map.ground_arg("val").unwrap();
 
-    builder.add_implies(
-        Type::and_pair(
-            &equatable,
-            &Type::ground_kv(&map, [
-                (map_key.clone(), Type::and_pair(&t, &equatable).unwrap()),
-                (map_val.clone(), u.clone()),
-            ].into_iter()).unwrap()
-        ).unwrap(),
-        Type::ground_kv(&setlike, [(setlike_item.clone(), t.clone())].into_iter()).unwrap(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::and_pair(
+                &equatable,
+                &Type::ground_kv(
+                    &map,
+                    [
+                        (map_key.clone(), Type::and_pair(&t, &equatable).unwrap()),
+                        (map_val.clone(), u.clone()),
+                    ]
+                    .into_iter(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            Type::ground_kv(&setlike, [(setlike_item.clone(), t.clone())].into_iter()).unwrap(),
+        )
+        .unwrap();
 
     let str_ = Type::var(&builder.add_type("Str"));
     let bool_ = Type::var(&builder.add_type("Bool"));
@@ -237,13 +302,20 @@ fn test_denorm_map_equatable_to_setlike() {
 
     let input = Type::and_pair(
         &equatable,
-        &Type::ground_kv(&map, [
-            (map_key.clone(), Type::and_pair(&str_, &equatable).unwrap()),
-            (map_val.clone(), bool_),
-        ].into_iter()).unwrap()
-    ).unwrap();
+        &Type::ground_kv(
+            &map,
+            [
+                (map_key.clone(), Type::and_pair(&str_, &equatable).unwrap()),
+                (map_val.clone(), bool_),
+            ]
+            .into_iter(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
 
-    let expected = Type::ground_kv(&setlike, [(setlike_item.clone(), str_.clone())].into_iter()).unwrap();
+    let expected =
+        Type::ground_kv(&setlike, [(setlike_item.clone(), str_.clone())].into_iter()).unwrap();
     let denormed = input.denorm().unwrap();
 
     assert!(denormed.matches(&expected).unwrap());
@@ -263,23 +335,47 @@ fn test_denorm_buffered_stream_conversion() {
     let buffer = builder.add_ground_type("Buffer", ["source"].into_iter());
     let buffer_source = buffer.ground_arg("source").unwrap();
 
-    builder.add_implies(
-        Type::and_pair(
-            &stream,
-            &Type::ground_kv(&buffer, [(buffer_source.clone(), Type::and_pair(&t, &stream).unwrap())].into_iter()).unwrap(),
-        ).unwrap(),
-        Type::ground_kv(&buffered_stream, [(buffered_stream_base.clone(), t.clone())].into_iter()).unwrap(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::and_pair(
+                &stream,
+                &Type::ground_kv(
+                    &buffer,
+                    [(buffer_source.clone(), Type::and_pair(&t, &stream).unwrap())].into_iter(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            Type::ground_kv(
+                &buffered_stream,
+                [(buffered_stream_base.clone(), t.clone())].into_iter(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
     let socket = Type::var(&builder.add_type("Socket"));
     let _ = builder.build();
 
     let input = Type::and_pair(
         &stream,
-        &Type::ground_kv(&buffer, [(buffer_source.clone(), Type::and_pair(&socket, &stream).unwrap())].into_iter()).unwrap(),
-    ).unwrap();
+        &Type::ground_kv(
+            &buffer,
+            [(
+                buffer_source.clone(),
+                Type::and_pair(&socket, &stream).unwrap(),
+            )]
+            .into_iter(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
 
-    let expected = Type::ground_kv(&buffered_stream, [(buffered_stream_base.clone(), socket.clone())].into_iter()).unwrap();
+    let expected = Type::ground_kv(
+        &buffered_stream,
+        [(buffered_stream_base.clone(), socket.clone())].into_iter(),
+    )
+    .unwrap();
     let denormed = input.denorm().unwrap();
 
     assert!(denormed.matches(&expected).unwrap());
@@ -316,14 +412,17 @@ fn test_denorm_ground_with_wildcard_implies_trait() {
     let u64 = Type::var(&builder.add_type("U64"));
 
     // Wrapper{inner: ?} implies Marker
-    builder.add_implies(
-        Type::ground_kv(&wrapper, [(wrapper_inner.clone(), Type::any())].into_iter()).unwrap(),
-        marker.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(&wrapper, [(wrapper_inner.clone(), Type::any())].into_iter()).unwrap(),
+            marker.clone(),
+        )
+        .unwrap();
 
     let _ = builder.build();
 
-    let wrapped_u64 = Type::ground_kv(&wrapper, [(wrapper_inner.clone(), u64.clone())].into_iter()).unwrap();
+    let wrapped_u64 =
+        Type::ground_kv(&wrapper, [(wrapper_inner.clone(), u64.clone())].into_iter()).unwrap();
     let denormed = wrapped_u64.denorm().unwrap();
 
     assert!(denormed.matches(&marker).unwrap());
@@ -340,7 +439,9 @@ fn test_denorm_irrelevant_implication() {
     let dummy = Type::var(&builder.add_type("Dummy"));
 
     // Dummy implies Unrelated
-    builder.add_implies(dummy.clone(), unrelated.clone()).unwrap();
+    builder
+        .add_implies(dummy.clone(), unrelated.clone())
+        .unwrap();
 
     let _ = builder.build();
 
@@ -393,10 +494,12 @@ fn test_denorm_recursive_generic_chain() {
     let printable = Type::var(&builder.add_type("Printable"));
 
     // Box{val: t} implies Printable if t is Printable
-    builder.add_implies(
-        Type::ground_kv(&box_, [(box_val.clone(), printable.clone())].into_iter()).unwrap(),
-        printable.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(&box_, [(box_val.clone(), printable.clone())].into_iter()).unwrap(),
+            printable.clone(),
+        )
+        .unwrap();
 
     let u64 = Type::var(&builder.add_type("U64"));
     builder.add_implies(u64.clone(), printable.clone()).unwrap();
@@ -424,18 +527,33 @@ fn test_denorm_multiple_ground_fields() {
     let iterable_elt = iterable.ground_arg("elt").unwrap();
 
     // Map{key: k, val: v} implies Iterable{elt: v}
-    builder.add_implies(
-        Type::ground_kv(&map, [(map_key.clone(), k.clone()), (map_val.clone(), v.clone())].into_iter()).unwrap(),
-        Type::ground_kv(&iterable, [(iterable_elt.clone(), v.clone())].into_iter()).unwrap(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(
+                &map,
+                [(map_key.clone(), k.clone()), (map_val.clone(), v.clone())].into_iter(),
+            )
+            .unwrap(),
+            Type::ground_kv(&iterable, [(iterable_elt.clone(), v.clone())].into_iter()).unwrap(),
+        )
+        .unwrap();
 
     let str_ = Type::var(&builder.add_type("Str"));
     let num = Type::var(&builder.add_type("Num"));
 
     let _ = builder.build();
 
-    let map_type = Type::ground_kv(&map, [(map_key.clone(), str_.clone()), (map_val.clone(), num.clone())].into_iter()).unwrap();
-    let expected_iter = Type::ground_kv(&iterable, [(iterable_elt.clone(), num.clone())].into_iter()).unwrap();
+    let map_type = Type::ground_kv(
+        &map,
+        [
+            (map_key.clone(), str_.clone()),
+            (map_val.clone(), num.clone()),
+        ]
+        .into_iter(),
+    )
+    .unwrap();
+    let expected_iter =
+        Type::ground_kv(&iterable, [(iterable_elt.clone(), num.clone())].into_iter()).unwrap();
 
     let denormed = map_type.denorm().unwrap();
     assert!(denormed.matches(&expected_iter).unwrap());
@@ -475,22 +593,52 @@ fn test_denorm_multiple_unspec_nested() {
     let flattens_to_elt = flattens_to.ground_arg("elt").unwrap();
 
     // Dict{key: k, val: List{elt: v}} implies FlatList{elt: v}
-    builder.add_implies(
-        Type::ground_kv(&dict, [(dict_key.clone(), k.clone()), (dict_val.clone(), Type::ground_kv(&list, [(list_elt.clone(), v.clone())].into_iter()).unwrap())].into_iter()).unwrap(),
-        Type::ground_kv(&flattens_to, [(flattens_to_elt.clone(), v.clone())].into_iter()).unwrap(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(
+                &dict,
+                [
+                    (dict_key.clone(), k.clone()),
+                    (
+                        dict_val.clone(),
+                        Type::ground_kv(&list, [(list_elt.clone(), v.clone())].into_iter())
+                            .unwrap(),
+                    ),
+                ]
+                .into_iter(),
+            )
+            .unwrap(),
+            Type::ground_kv(
+                &flattens_to,
+                [(flattens_to_elt.clone(), v.clone())].into_iter(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
     let str_ = Type::var(&builder.add_type("Str"));
     let num = Type::var(&builder.add_type("Num"));
 
     let _ = builder.build();
 
-    let nested = Type::ground_kv(&dict, [
-        (dict_key.clone(), str_.clone()),
-        (dict_val.clone(), Type::ground_kv(&list, [(list_elt.clone(), num.clone())].into_iter()).unwrap())
-    ].into_iter()).unwrap();
+    let nested = Type::ground_kv(
+        &dict,
+        [
+            (dict_key.clone(), str_.clone()),
+            (
+                dict_val.clone(),
+                Type::ground_kv(&list, [(list_elt.clone(), num.clone())].into_iter()).unwrap(),
+            ),
+        ]
+        .into_iter(),
+    )
+    .unwrap();
 
-    let expected = Type::ground_kv(&flattens_to, [(flattens_to_elt.clone(), num.clone())].into_iter()).unwrap();
+    let expected = Type::ground_kv(
+        &flattens_to,
+        [(flattens_to_elt.clone(), num.clone())].into_iter(),
+    )
+    .unwrap();
 
     let denormed = nested.denorm().unwrap();
     assert!(denormed.matches(&expected).unwrap());
@@ -509,10 +657,12 @@ fn test_denorm_unspec_invalid() {
     let iter_elt = iter.ground_arg("elt").unwrap();
 
     // Vec{elt: t} implies Iterable{elt: t}
-    builder.add_implies(
-        Type::ground_kv(&vec, [(vec_elt.clone(), t.clone())].into_iter()).unwrap(),
-        Type::ground_kv(&iter, [(iter_elt.clone(), t.clone())].into_iter()).unwrap(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(&vec, [(vec_elt.clone(), t.clone())].into_iter()).unwrap(),
+            Type::ground_kv(&iter, [(iter_elt.clone(), t.clone())].into_iter()).unwrap(),
+        )
+        .unwrap();
 
     let _ = builder.build();
 
@@ -533,22 +683,34 @@ fn test_denorm_nested_box_box_to_flattened() {
     let flattened = Type::var(&builder.add_type("Flattened"));
 
     // Box{val: Box{val: t}} implies Flattened
-    builder.add_implies(
-        Type::ground_kv(&box_, [(
-            box_val.clone(),
-            Type::ground_kv(&box_, [(box_val.clone(), t.clone())].into_iter()).unwrap()
-        )].into_iter()).unwrap(),
-        flattened.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(
+                &box_,
+                [(
+                    box_val.clone(),
+                    Type::ground_kv(&box_, [(box_val.clone(), t.clone())].into_iter()).unwrap(),
+                )]
+                .into_iter(),
+            )
+            .unwrap(),
+            flattened.clone(),
+        )
+        .unwrap();
 
     let u64 = Type::var(&builder.add_type("U64"));
 
     let _ = builder.build();
 
-    let nested_box = Type::ground_kv(&box_, [(
-        box_val.clone(),
-        Type::ground_kv(&box_, [(box_val.clone(), u64.clone())].into_iter()).unwrap()
-    )].into_iter()).unwrap();
+    let nested_box = Type::ground_kv(
+        &box_,
+        [(
+            box_val.clone(),
+            Type::ground_kv(&box_, [(box_val.clone(), u64.clone())].into_iter()).unwrap(),
+        )]
+        .into_iter(),
+    )
+    .unwrap();
 
     let denormed = nested_box.denorm().unwrap();
 
@@ -572,28 +734,50 @@ fn test_denorm_deeply_nested_composite_to_trait() {
     let clone = Type::var(&builder.add_type("Clone"));
 
     // Option{val: Result{ok: t, err: t}} implies Clone
-    builder.add_implies(
-        Type::ground_kv(&option, [(
-            option_val.clone(),
-            Type::ground_kv(&result, [
-                (result_ok.clone(), t.clone()),
-                (result_err.clone(), t.clone())
-            ].into_iter()).unwrap()
-        )].into_iter()).unwrap(),
-        clone.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(
+                &option,
+                [(
+                    option_val.clone(),
+                    Type::ground_kv(
+                        &result,
+                        [
+                            (result_ok.clone(), t.clone()),
+                            (result_err.clone(), t.clone()),
+                        ]
+                        .into_iter(),
+                    )
+                    .unwrap(),
+                )]
+                .into_iter(),
+            )
+            .unwrap(),
+            clone.clone(),
+        )
+        .unwrap();
 
     let str_ = Type::var(&builder.add_type("Str"));
 
     let _ = builder.build();
 
-    let nested = Type::ground_kv(&option, [(
-        option_val.clone(),
-        Type::ground_kv(&result, [
-            (result_ok.clone(), str_.clone()),
-            (result_err.clone(), str_.clone())
-        ].into_iter()).unwrap()
-    )].into_iter()).unwrap();
+    let nested = Type::ground_kv(
+        &option,
+        [(
+            option_val.clone(),
+            Type::ground_kv(
+                &result,
+                [
+                    (result_ok.clone(), str_.clone()),
+                    (result_err.clone(), str_.clone()),
+                ]
+                .into_iter(),
+            )
+            .unwrap(),
+        )]
+        .into_iter(),
+    )
+    .unwrap();
 
     let denormed = nested.denorm().unwrap();
 
@@ -612,22 +796,39 @@ fn test_denorm_recursive_wrapper() {
     let marker = Type::var(&builder.add_type("Marked"));
 
     // Wrapper{inner: Wrapper{inner: t}} implies Marked
-    builder.add_implies(
-        Type::ground_kv(&wrapper, [(
-            wrapper_inner.clone(),
-            Type::ground_kv(&wrapper, [(wrapper_inner.clone(), t.clone())].into_iter()).unwrap()
-        )].into_iter()).unwrap(),
-        marker.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(
+                &wrapper,
+                [(
+                    wrapper_inner.clone(),
+                    Type::ground_kv(&wrapper, [(wrapper_inner.clone(), t.clone())].into_iter())
+                        .unwrap(),
+                )]
+                .into_iter(),
+            )
+            .unwrap(),
+            marker.clone(),
+        )
+        .unwrap();
 
     let bool_ = Type::var(&builder.add_type("Bool"));
 
     let _ = builder.build();
 
-    let nested = Type::ground_kv(&wrapper, [(
-        wrapper_inner.clone(),
-        Type::ground_kv(&wrapper, [(wrapper_inner.clone(), bool_.clone())].into_iter()).unwrap()
-    )].into_iter()).unwrap();
+    let nested = Type::ground_kv(
+        &wrapper,
+        [(
+            wrapper_inner.clone(),
+            Type::ground_kv(
+                &wrapper,
+                [(wrapper_inner.clone(), bool_.clone())].into_iter(),
+            )
+            .unwrap(),
+        )]
+        .into_iter(),
+    )
+    .unwrap();
 
     let denormed = nested.denorm().unwrap();
 
@@ -651,30 +852,45 @@ fn test_denorm_nested_generic_with_propagation() {
     let access_target = access.ground_arg("target").unwrap();
 
     // Inner{val: t} implies Access{target: t}
-    builder.add_implies(
-        Type::ground_kv(&inner, [(inner_val.clone(), t.clone())].into_iter()).unwrap(),
-        Type::ground_kv(&access, [(access_target.clone(), t.clone())].into_iter()).unwrap(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(&inner, [(inner_val.clone(), t.clone())].into_iter()).unwrap(),
+            Type::ground_kv(&access, [(access_target.clone(), t.clone())].into_iter()).unwrap(),
+        )
+        .unwrap();
 
     // Outer{inner: Inner{val: t}} implies Access{target: t}
-    builder.add_implies(
-        Type::ground_kv(&outer, [(
-            outer_inner.clone(),
-            Type::ground_kv(&inner, [(inner_val.clone(), t.clone())].into_iter()).unwrap()
-        )].into_iter()).unwrap(),
-        Type::ground_kv(&access, [(access_target.clone(), t.clone())].into_iter()).unwrap(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(
+                &outer,
+                [(
+                    outer_inner.clone(),
+                    Type::ground_kv(&inner, [(inner_val.clone(), t.clone())].into_iter()).unwrap(),
+                )]
+                .into_iter(),
+            )
+            .unwrap(),
+            Type::ground_kv(&access, [(access_target.clone(), t.clone())].into_iter()).unwrap(),
+        )
+        .unwrap();
 
     let i8 = Type::var(&builder.add_type("I8"));
 
     let _ = builder.build();
 
-    let composed = Type::ground_kv(&outer, [(
-        outer_inner.clone(),
-        Type::ground_kv(&inner, [(inner_val.clone(), i8.clone())].into_iter()).unwrap()
-    )].into_iter()).unwrap();
+    let composed = Type::ground_kv(
+        &outer,
+        [(
+            outer_inner.clone(),
+            Type::ground_kv(&inner, [(inner_val.clone(), i8.clone())].into_iter()).unwrap(),
+        )]
+        .into_iter(),
+    )
+    .unwrap();
 
-    let expected = Type::ground_kv(&access, [(access_target.clone(), i8.clone())].into_iter()).unwrap();
+    let expected =
+        Type::ground_kv(&access, [(access_target.clone(), i8.clone())].into_iter()).unwrap();
 
     let denormed = composed.denorm().unwrap();
 
@@ -726,14 +942,17 @@ fn test_denorm_nested_wildcard_explosion() {
     let anything = Type::var(&builder.add_type("Anything"));
 
     // Wrapper{val: ?} implies Anything
-    builder.add_implies(
-        Type::ground_kv(&wrapper, [(wrapper_val.clone(), Type::any())].into_iter()).unwrap(),
-        anything.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(&wrapper, [(wrapper_val.clone(), Type::any())].into_iter()).unwrap(),
+            anything.clone(),
+        )
+        .unwrap();
     let u64 = Type::var(&builder.add_type("U64"));
     let _ = builder.build();
 
-    let wrapped = Type::ground_kv(&wrapper, [(wrapper_val.clone(), u64.clone())].into_iter()).unwrap();
+    let wrapped =
+        Type::ground_kv(&wrapper, [(wrapper_val.clone(), u64.clone())].into_iter()).unwrap();
 
     let denormed = wrapped.denorm().unwrap();
 
@@ -752,19 +971,35 @@ fn test_denorm_unspec_combination_explosion() {
     let is_valid = Type::var(&builder.add_type("IsValid"));
 
     // Container{item: t} ⇒ HasValue
-    builder.add_implies(
-        Type::ground_kv(&container, [(container_item.clone(), t.clone())].into_iter()).unwrap(),
-        has_value.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(
+                &container,
+                [(container_item.clone(), t.clone())].into_iter(),
+            )
+            .unwrap(),
+            has_value.clone(),
+        )
+        .unwrap();
 
     // Container{item: t} ⇒ IsValid
-    builder.add_implies(
-        Type::ground_kv(&container, [(container_item.clone(), t.clone())].into_iter()).unwrap(),
-        is_valid.clone(),
-    ).unwrap();
+    builder
+        .add_implies(
+            Type::ground_kv(
+                &container,
+                [(container_item.clone(), t.clone())].into_iter(),
+            )
+            .unwrap(),
+            is_valid.clone(),
+        )
+        .unwrap();
 
     let bool_ = Type::var(&builder.add_type("Bool"));
-    let input = Type::ground_kv(&container, [(container_item.clone(), bool_.clone())].into_iter()).unwrap();
+    let input = Type::ground_kv(
+        &container,
+        [(container_item.clone(), bool_.clone())].into_iter(),
+    )
+    .unwrap();
 
     let _ = builder.build();
 
@@ -782,10 +1017,9 @@ fn test_denorm_intersection_recursive_loop() {
     let c = Type::var(&builder.add_type("C"));
 
     // A + B ⇒ C
-    builder.add_implies(
-        Type::and_pair(&a, &b).unwrap(),
-        c.clone(),
-    ).unwrap();
+    builder
+        .add_implies(Type::and_pair(&a, &b).unwrap(), c.clone())
+        .unwrap();
 
     // C ⇒ A
     builder.add_implies(c.clone(), a.clone()).unwrap();
