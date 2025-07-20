@@ -20,6 +20,12 @@ impl chumsky::container::Container<TokenStream> for TokenStreamWrapper {
     }
 }
 
+impl chumsky::container::Container<TokenTreeWrapper> for TokenStreamWrapper {
+    fn push(&mut self, item: TokenTreeWrapper) {
+        self.0.extend([item.0].into_iter());
+    }
+}
+
 impl quote::ToTokens for TokenStreamWrapper {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.extend(self.0.clone());
@@ -66,9 +72,9 @@ fn dialect_parser<'src>() -> impl Parser<
         .map(|(name, ground_ars)| MemberSpec::TypeDecl { name, ground_ars });
 
     let type_implies = exact_ident("type")
-        .ignore_then(type_parser())
+        .ignore_then(type_parser(false))
         .then_ignore(punct_seq("=>"))
-        .then(type_parser())
+        .then(type_parser(false))
         .map(|(lhs, rhs)| MemberSpec::Implies { lhs, rhs });
 
     let node_decl = exact_ident("node")
@@ -77,14 +83,14 @@ fn dialect_parser<'src>() -> impl Parser<
         .then(
             ident()
                 .then_ignore(punct(':'))
-                .then(type_parser())
+                .then(type_parser(false))
                 .separated_by(punct(','))
                 .collect::<Vec<(String, TokenStream)>>(),
         )
         .then_ignore(exact_ident("outs"))
         .then(
             ident()
-                .then(punct(':').ignore_then(type_parser()).or_not())
+                .then(punct(':').ignore_then(type_parser(false)).or_not())
                 .separated_by(punct(','))
                 .collect::<Vec<(String, Option<TokenStream>)>>(),
         )
@@ -132,6 +138,7 @@ fn dialect_parser<'src>() -> impl Parser<
             let mut types_init_struct = TokenStream::new();
             let mut nodes_init_struct = TokenStream::new();
             let mut types_init_builder = TokenStream::new();
+            let mut nodes_init_builder = TokenStream::new();
             let mut members_nodestruct = TokenStream::new();
 
             let members_typestruct = members
@@ -185,13 +192,21 @@ fn dialect_parser<'src>() -> impl Parser<
                         let gna = format!("DialectNodeRef__{}", name);
                         let gna = Ident::new(gna.as_str(), Span::call_site());
 
-                        let gnb_new_ins = inputs
-                            .iter()
-                            .flat_map(|(k,_)| {
-                                let kn = Ident::new(k.as_str(), Span::call_site());
-                                quote! { (#k,self.#kn), }
-                            })
-                            .collect::<TokenStream>();
+                        let gnb_new_ins_iter = if inputs.len() == 0 {
+                            quote! { ::std::iter::empty::<(&'static str, ::vxcc_ir::Out)>() }
+                        } else {
+                            let gnb_new_ins = inputs
+                                .iter()
+                                .flat_map(|(k,_)| {
+                                    let kn = Ident::new(k.as_str(), Span::call_site());
+                                    quote! { (#k,self.#kn), }
+                                })
+                                .collect::<TokenStream>();
+
+                            quote! {
+                                [#gnb_new_ins].into_iter()
+                            }
+                        };
 
                         builders = quote! {
                             #builders
@@ -201,9 +216,9 @@ fn dialect_parser<'src>() -> impl Parser<
                             }
 
                             impl #gnb {
-                                pub fn build(self) -> #gna {
-                                    let nd = ::vxcc_ir::Node::new(&DIALECT.nodes.#name_id.ty, [#gnb_new_ins].into_iter()).unwrap();
-                                    #gna { nd }
+                                pub fn build(self) -> Result<#gna, ::vxcc_ir::IrError> {
+                                    let nd = ::vxcc_ir::Node::new(&DIALECT.nodes.#name_id.ty.clone(), #gnb_new_ins_iter)?;
+                                    Ok(#gna { nd })
                                 }
                             }
                         };
@@ -275,23 +290,33 @@ fn dialect_parser<'src>() -> impl Parser<
                         let nd_name_id = format!("nd__{}", name_id);
                         let nd_name_id = Ident::new(nd_name_id.as_str(), Span::call_site());
 
-                        let init_ins = inputs.iter()
-                            .flat_map(|(name,ty)| quote! { (#name,#ty), })
-                            .collect::<TokenStream>();
+                        let init_ins = if inputs.len() == 0 {
+                            quote! { ::std::iter::empty::<(&'static str, ::vxcc_ir::types::Type)>() }
+                        } else {
+                            let i = inputs.iter()
+                                .flat_map(|(name,ty)| quote! { (#name,#ty), })
+                                .collect::<TokenStream>();
+                            quote! { [#i].into_iter() }
+                        };
 
-                        let init_outs = outputs.iter()
-                            .flat_map(|(name,_)| quote! { #name, })
-                            .collect::<TokenStream>();
+                        let init_outs = if outputs.len() == 0 {
+                            quote! { ::std::iter::empty::<&'static str>() }
+                        } else {
+                            let i = outputs.iter()
+                                .flat_map(|(name,_)| quote! { #name, })
+                                .collect::<TokenStream>();
+                            quote! { [#i].into_iter() }
+                        };
 
                         let gn_infer = format!("DialectNodeInfer__{}", name);
                         let gn_infer = Ident::new(gn_infer.as_str(), Span::call_site());
 
-                        types_init_builder = quote! {
-                            #types_init_builder
+                        nodes_init_builder = quote! {
+                            #nodes_init_builder
                             let #nd_name_id = builder.add_node_type(#name,
                                                                         Box::new(#gn_infer {}),
-                                                                        [#init_ins].into_iter(),
-                                                                        [#init_outs].into_iter()).unwrap();
+                                                                        #init_ins,
+                                                                        #init_outs).unwrap();
                         };
 
                         let initstruct_ins = inputs.iter()
@@ -320,7 +345,7 @@ fn dialect_parser<'src>() -> impl Parser<
                                 ty: #nd_name_id,
                                 #initstruct_ins
                                 #initstruct_outs
-                            }
+                            },
                         };
 
                         let infer_func_impl = match infer_func {
@@ -429,7 +454,7 @@ fn dialect_parser<'src>() -> impl Parser<
                                         pub fn build(self) -> ::vxcc_ir::types::Type {
                                             unsafe {
                                                 ::vxcc_ir::types::Type::ground_kv(
-                                                    &DIALECT.types.#nameid.ty,
+                                                    &DIALECT.types.#nameid.ty.clone(),
                                                     [#gnb_init_args].into_iter()
                                                     ).unwrap_unchecked()
                                             }
@@ -482,8 +507,8 @@ fn dialect_parser<'src>() -> impl Parser<
                     }
 
                     MemberSpec::Implies { lhs, rhs } => {
-                        types_init_builder = quote! {
-                            #types_init_builder
+                        nodes_init_builder = quote! {
+                            #nodes_init_builder
                             builder.add_implies(#lhs, #rhs).unwrap();
                         };
 
@@ -510,30 +535,44 @@ fn dialect_parser<'src>() -> impl Parser<
                     pub dialect: ::vxcc_ir::DialectRef,
                     pub deps: Vec<::vxcc_ir::DialectDep>,
                     pub types: DialectTypes,
-                    pub nodes: DialectNodes,
+                    wip_builder: ::std::sync::Mutex<::std::cell::RefCell<Option<::vxcc_ir::DialectBuilder>>>,
+                    pub nodes: ::std::sync::LazyLock<DialectNodes>,
+                }
+
+                fn create_nodes() -> DialectNodes {
+                    use super::#nmod as vxcc___dialect;
+
+                    let mut builder = DIALECT.wip_builder.lock().unwrap().replace(None).unwrap();
+
+                    #nodes_init_builder
+
+                    let dialect = builder.build();
+
+                    DialectNodes {
+                        #nodes_init_struct
+                    }
+                }
+
+                fn lateinit() {
+                    let _ = &DIALECT.nodes;
                 }
 
                 fn create() -> Dialect {
                     use super::#nmod as vxcc___dialect;
 
                     let mut builder = ::vxcc_ir::DialectBuilder::new(#n);
-
-                    let Clone = builder.add_type("Clone");
+                    builder.dont_call_this__add_lateinit(lateinit);
 
                     #types_init_builder
 
-                    let dialect = builder.build();
-                    let dialect = dialect.get_dialect();
-
                     Dialect {
-                        dialect,
+                        dialect: builder.wip_ref(),
                         deps: vec![ #deps ],
                         types: DialectTypes {
                             #types_init_struct
                         },
-                        nodes: DialectNodes {
-                            #nodes_init_struct
-                        }
+                        wip_builder: ::std::sync::Mutex::new(::std::cell::RefCell::new(Some(builder))),
+                        nodes: ::std::sync::LazyLock::new(create_nodes),
                     }
                 }
 
@@ -547,6 +586,83 @@ pub fn dialect(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);
 
     let v = dialect_parser()
+        .parse(Stream::from_iter(
+            input
+                .into_iter()
+                .map(|x| TokenTreeWrapper(x))
+                .collect::<Vec<_>>()
+                .into_iter(),
+        ))
+        .into_result()
+        .unwrap();
+
+    v.into()
+}
+
+fn mk_parser<'src>() -> impl Parser<
+    'src,
+    chumsky::input::Stream<std::vec::IntoIter<TokenTreeWrapper>>,
+    proc_macro2::TokenStream,
+    chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>,
+> {
+    vxcc_type_parser::var_parser()
+        .then(
+            punct(',')
+                .ignore_then(
+                    any()
+                        .repeated()
+                        .collect::<TokenStreamWrapper>()
+                        .map(|x| x.0),
+                )
+                .or_not(),
+        )
+        .map(|(var, init)| {
+            let init = init.map(|init| {
+                init.into_iter()
+                    .scan(false, |state, x| match (*state, x) {
+                        (_, proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == '#' => {
+                            *state = true;
+                            Some(vec![])
+                        }
+                        (false, x) => Some(vec![x]),
+                        (true, proc_macro2::TokenTree::Ident(id)) => {
+                            let id = format!("out__{}", id);
+                            let id = Ident::new(id.as_str(), Span::call_site());
+                            *state = false;
+                            Some(quote! { #id() }.into_iter().collect())
+                        }
+                        (true, _) => panic!("no"),
+                    })
+                    .flatten()
+                    .collect::<proc_macro2::TokenStream>()
+            });
+
+            match var {
+                Var::Dyn { dialect, name } => {
+                    panic!("`mk!()` with dyn node type not yet implemented")
+                }
+                Var::Static { dialect, name } => {
+                    let gnb = format!("DialectNodeBuilder__{}", name);
+                    let gnb = Ident::new(gnb.as_str(), Span::call_site());
+                    quote! {
+                        #dialect::#gnb { #init }.build()
+                    }
+                }
+            }
+        })
+}
+
+/// build a node
+///
+/// example:
+/// ```
+/// let nd = mk!(some.Node, a: a, b: b).nd;
+/// ```
+#[proc_macro]
+pub fn mk(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = proc_macro2::TokenStream::from(input);
+
+    let v = mk_parser()
         .parse(Stream::from_iter(
             input
                 .into_iter()

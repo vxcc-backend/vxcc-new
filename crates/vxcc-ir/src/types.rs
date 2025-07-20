@@ -674,6 +674,8 @@ impl Type {
     }
 
     fn denorm_options(&self) -> Vec<(Type, Type)> {
+        drop(DialectRegistry::get()); // to call lazyinit funcs
+
         match &*self.0 {
             TypeImpl::Var(v) => DENORM_LUT
                 .lock()

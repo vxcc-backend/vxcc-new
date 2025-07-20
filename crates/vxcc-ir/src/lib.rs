@@ -103,12 +103,14 @@ impl std::fmt::Display for IrError {
 
 pub struct DialectRegistry {
     dialects: HashMap<String, DialectRef>,
+    lateinit: Vec<fn()>,
 }
 
 impl DialectRegistry {
     fn new() -> Self {
         Self {
             dialects: HashMap::new(),
+            lateinit: vec![],
         }
     }
 
@@ -116,7 +118,12 @@ impl DialectRegistry {
         static REGISTRY: LazyLock<Mutex<DialectRegistry>> =
             LazyLock::new(|| Mutex::new(DialectRegistry::new()));
 
-        REGISTRY.lock().unwrap()
+        let mut lock = REGISTRY.lock().unwrap();
+        for func in lock.lateinit.drain(..) {
+            func();
+        }
+
+        lock
     }
 
     pub fn get_dialects() -> Vec<(String, DialectRef)> {
@@ -145,15 +152,24 @@ pub struct DialectBuilder(DialectRef);
 
 impl DialectBuilder {
     pub fn new(name: &str) -> DialectBuilder {
-        DialectBuilder(DialectRef::new(Dialect {
+        let r = DialectRef::new(Dialect {
             name: name.to_string(),
             types: Mutex::new(RefCell::new(HashMap::new())),
             node_types: Mutex::new(RefCell::new(HashMap::new())),
-        }))
+        });
+        DialectRegistry::add(name, r.clone());
+        DialectBuilder(r)
+    }
+
+    pub fn dont_call_this__add_lateinit(&self, func: fn()) {
+        DialectRegistry::get().lateinit.push(func);
+    }
+
+    pub fn wip_ref(&self) -> DialectRef {
+        self.0.clone()
     }
 
     pub fn build(self) -> DialectOwner {
-        DialectRegistry::add(self.0.name.as_str(), self.0.clone());
         DialectOwner { dialect: self.0 }
     }
 

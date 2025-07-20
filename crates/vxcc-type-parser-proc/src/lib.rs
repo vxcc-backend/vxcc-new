@@ -8,7 +8,7 @@ use vxcc_type_parser::*;
 pub fn ty(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);
 
-    let v = type_parser()
+    let v = type_parser(false)
         .parse(Stream::from_iter(
             input
                 .into_iter()
