@@ -138,7 +138,6 @@ fn dialect_parser<'src>() -> impl Parser<
                 .iter()
                 .flat_map(|spec| match spec {
                     MemberSpec::Node { name, inputs, outputs, infer_func } => {
-                        // TODO: infer_func
                         let name_id = Ident::new(name.as_str(), Span::call_site());
 
                         let gn = format!("DialectNode__{}", name);
@@ -183,8 +182,16 @@ fn dialect_parser<'src>() -> impl Parser<
                             })
                             .collect::<TokenStream>();
 
-                        let gna = format!("DialectNode__{}", name);
+                        let gna = format!("DialectNodeRef__{}", name);
                         let gna = Ident::new(gna.as_str(), Span::call_site());
+
+                        let gnb_new_ins = inputs
+                            .iter()
+                            .flat_map(|(k,_)| {
+                                let kn = Ident::new(k.as_str(), Span::call_site());
+                                quote! { (#k,self.#kn), }
+                            })
+                            .collect::<TokenStream>();
 
                         builders = quote! {
                             #builders
@@ -195,7 +202,7 @@ fn dialect_parser<'src>() -> impl Parser<
 
                             impl #gnb {
                                 pub fn build(self) -> #gna {
-                                    // TODO: implement
+                                    let nd = ::vxcc_ir::Node::new(&DIALECT.nodes.#name_id.ty, [#gnb_new_ins].into_iter()).unwrap();
                                     #gna { nd }
                                 }
                             }
@@ -207,7 +214,7 @@ fn dialect_parser<'src>() -> impl Parser<
                                 let argid = Ident::new(argid.as_str(), Span::call_site());
 
                                 quote! {
-                                    pub fn #name_id(&self) -> ::vxcc_ir::In {
+                                    pub fn #argid(&self) -> ::vxcc_ir::In {
                                         unsafe {
                                             ::vxcc_ir::In::new(self.node(), DIALECT.nodes.#name_id.#argid)
                                         }
@@ -216,13 +223,13 @@ fn dialect_parser<'src>() -> impl Parser<
                             })
                             .collect::<TokenStream>();
 
-                        let gna_outs = inputs.iter()
+                        let gna_outs = outputs.iter()
                             .flat_map(|(name, _)| {
                                 let argid = format!("out__{}", name);
                                 let argid = Ident::new(argid.as_str(), Span::call_site());
 
                                 quote! {
-                                    pub fn #name_id(&self) -> ::vxcc_ir::Out {
+                                    pub fn #argid(&self) -> ::vxcc_ir::Out {
                                         unsafe {
                                             ::vxcc_ir::Out::new(self.node(), DIALECT.nodes.#name_id.#argid)
                                         }
@@ -248,13 +255,13 @@ fn dialect_parser<'src>() -> impl Parser<
                             }
 
                             impl TryFrom<::vxcc_ir::Node> for #gna {
-                                type Result = ();
+                                type Error = ();
 
-                                pub fn try_from(node: ::vxcc_ir::Node) -> Result<#gna, Self::Result> {
+                                fn try_from(node: ::vxcc_ir::Node) -> Result<#gna, Self::Error> {
                                     if node.get_type() != DIALECT.nodes.#name_id.ty {
                                         Err(())
                                     } else {
-                                        Ok(#gna { node })
+                                        Ok(#gna { nd: node })
                                     }
                                 }
                             }
@@ -276,17 +283,21 @@ fn dialect_parser<'src>() -> impl Parser<
                             .flat_map(|(name,_)| quote! { #name, })
                             .collect::<TokenStream>();
 
+                        let gn_infer = format!("DialectNodeInfer__{}", name);
+                        let gn_infer = Ident::new(gn_infer.as_str(), Span::call_site());
+
                         types_init_builder = quote! {
                             #types_init_builder
                             let #nd_name_id = builder.add_node_type(#name,
-                                                                        TODO /* infer func*/,
+                                                                        Box::new(#gn_infer {}),
                                                                         [#init_ins].into_iter(),
-                                                                        [#init_outs].into_iter());
+                                                                        [#init_outs].into_iter()).unwrap();
                         };
 
                         let initstruct_ins = inputs.iter()
                             .enumerate()
                             .flat_map(|(idx, (name,_))| {
+                                let idx = idx as u8;
                                 let argid = format!("in__{}", name);
                                 let argid = Ident::new(argid.as_str(), Span::call_site());
                                 quote! { #argid: #idx, }
@@ -296,6 +307,7 @@ fn dialect_parser<'src>() -> impl Parser<
                         let initstruct_outs = outputs.iter()
                             .enumerate()
                             .flat_map(|(idx, (name,_))| {
+                                let idx = idx as u8;
                                 let argid = format!("out__{}", name);
                                 let argid = Ident::new(argid.as_str(), Span::call_site());
                                 quote! { #argid: #idx, }
@@ -311,7 +323,41 @@ fn dialect_parser<'src>() -> impl Parser<
                             }
                         };
 
-                        // TODO: codegen infer function
+                        let infer_func_impl = match infer_func {
+                            Some(func) => {
+                                if outputs.iter().any(|(_,x)| x.is_some()) {
+                                    panic!("automatic type inference in combination with manual inference function is currently not supported");
+                                }
+                                quote! { #func(node, out) }
+                            }
+                            None => {
+                                let type_infers = outputs.iter()
+                                    .map(|(name,ty)| {
+                                        let ty = ty.as_ref().expect("no output type set. either set a output type, or use a manual inference function");
+                                        quote! {
+                                            out.set_name(#name, #ty)?;
+                                        }
+                                    })
+                                    .collect::<proc_macro2::TokenStream>();
+
+                                quote! {
+                                    use super::#nmod as vxcc___dialect;
+                                    #type_infers
+                                    Ok(())
+                                }
+                            }
+                        };
+
+                        builders = quote! {
+                            #builders
+
+                            struct #gn_infer {}
+                            impl ::vxcc_ir::NodeOutTypeInfer for #gn_infer {
+                                fn infer_outputs(&self, node: ::vxcc_ir::Node, out: &mut ::vxcc_ir::NodeOutTypeInferRes) -> Result<(), ::vxcc_ir::IrError> {
+                                    #infer_func_impl
+                                }
+                            }
+                        };
 
                         TokenStream::new()
                     }
