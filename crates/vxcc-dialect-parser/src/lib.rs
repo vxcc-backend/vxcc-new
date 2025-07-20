@@ -367,6 +367,7 @@ fn dialect_parser<'src>() -> impl Parser<
 
                                 quote! {
                                     use super::#nmod as vxcc___dialect;
+                                    use super::*;
                                     #type_infers
                                     Ok(())
                                 }
@@ -541,6 +542,7 @@ fn dialect_parser<'src>() -> impl Parser<
 
                 fn create_nodes() -> DialectNodes {
                     use super::#nmod as vxcc___dialect;
+                    use super::*;
 
                     let mut builder = DIALECT.wip_builder.lock().unwrap().replace(None).unwrap();
 
@@ -559,6 +561,7 @@ fn dialect_parser<'src>() -> impl Parser<
 
                 fn create() -> Dialect {
                     use super::#nmod as vxcc___dialect;
+                    use super::*;
 
                     let mut builder = ::vxcc_ir::DialectBuilder::new(#n);
                     builder.dont_call_this__add_lateinit(lateinit);

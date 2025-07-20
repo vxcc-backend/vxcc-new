@@ -1,4 +1,5 @@
 use vxcc_dialect_parser::*;
+use vxcc_ir::vxcc_core_dialect;
 
 dialect! {
     dialect arith:
@@ -6,6 +7,7 @@ dialect! {
         ;
 
     type U8;
+    type U8 => core.Clone;
 
     type Vec { elt };
 
