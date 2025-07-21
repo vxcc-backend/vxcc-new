@@ -51,6 +51,7 @@ fn dialect_parser<'src>() -> impl Parser<
 
         Node {
             name: String,
+            ty: TokenStream,
             inputs: Vec<(String, TokenStream)>,
             outputs: Vec<(String, Option<TokenStream>)>,
             attrs: Vec<String>,
@@ -80,6 +81,8 @@ fn dialect_parser<'src>() -> impl Parser<
 
     let node_decl = exact_ident("node")
         .ignore_then(ident())
+        .then_ignore(exact_ident("type"))
+        .then(type_parser(false))
         .then_ignore(exact_ident("ins"))
         .then(
             ident()
@@ -109,8 +112,9 @@ fn dialect_parser<'src>() -> impl Parser<
                 .or_not(),
         )
         .map(
-            |((((name, inputs), outputs), attrs), infer_func)| MemberSpec::Node {
+            |(((((name, ty), inputs), outputs), attrs), infer_func)| MemberSpec::Node {
                 name,
+                ty,
                 inputs,
                 outputs,
                 attrs,
@@ -154,7 +158,7 @@ fn dialect_parser<'src>() -> impl Parser<
             let members_typestruct = members
                 .iter()
                 .flat_map(|spec| match spec {
-                    MemberSpec::Node { name, inputs, outputs, attrs, infer_func } => {
+                    MemberSpec::Node { name, ty, inputs, outputs, attrs, infer_func } => {
                         let name_id = Ident::new(name.as_str(), Span::call_site());
 
                         let gn = format!("DialectNode__{}", name);
@@ -383,7 +387,7 @@ fn dialect_parser<'src>() -> impl Parser<
 
                         nodes_init_builder = quote! {
                             #nodes_init_builder
-                            let #nd_name_id = builder.add_node_type(#name,
+                            let #nd_name_id = builder.add_node_type(#name, #ty,
                                                                         Box::new(#gn_infer {}),
                                                                         #init_ins,
                                                                         #init_outs,

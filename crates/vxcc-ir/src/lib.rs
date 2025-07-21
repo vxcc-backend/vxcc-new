@@ -235,6 +235,7 @@ impl DialectBuilder {
     pub fn add_node_type(
         &mut self,
         name: impl AsRef<str>,
+        ty: types::Type,
         infer: Box<dyn NodeOutTypeInfer + Send + Sync>,
         args: impl Iterator<Item = (impl AsRef<str>, types::Type)>,
         outs: impl Iterator<Item = impl AsRef<str>>,
@@ -257,6 +258,7 @@ impl DialectBuilder {
                 .enumerate()
                 .map(|(k, v)| (v.as_ref().to_string(), k as u8))
                 .collect(),
+            ty,
         };
         let ty = NodeType::new(ty);
 
@@ -388,6 +390,7 @@ pub struct NodeTypeImpl {
     attrs_lookup: HashMap<String, u8>,
     infer: Box<dyn NodeOutTypeInfer + Send + Sync>,
     name: String,
+    ty: types::Type,
 }
 
 impl std::hash::Hash for NodeTypeImpl {
@@ -432,6 +435,10 @@ impl NodeTypeImpl {
 
     pub fn get_attrs(&self) -> impl Iterator<Item = &str> {
         self.attrs_lookup.keys().map(|x| x.as_str())
+    }
+
+    pub fn get_type(&self) -> types::Type {
+        self.ty.clone()
     }
 
     pub(crate) fn _lookup_input(&self, key: &str) -> Option<NodePortVecIdx> {

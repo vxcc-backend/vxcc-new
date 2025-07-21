@@ -16,7 +16,10 @@ dialect! {
 
     type Vec { elt: ?e } => Iter { elt: ?elt };
 
+    type Op;
+
     node add
+        type Op
         ins
             a: U8,
             b: U8
@@ -25,18 +28,21 @@ dialect! {
         ;
 
     node zero
+        type Op
         ins
         outs
             res: U8
         ;
 
     node sink
+        type Op
         ins
             a: ?a
         outs
         ;
 
     node num
+        type Op
         ins
         outs
             res: U8
