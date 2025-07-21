@@ -35,6 +35,14 @@ dialect! {
         outs
         ;
 
+    node num
+        ins
+        outs
+            res: U8
+        attrs
+            num
+        ;
+
 }
 
 #[test]

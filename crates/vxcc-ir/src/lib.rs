@@ -517,9 +517,7 @@ impl Node {
         attrs: impl Iterator<Item = (impl AsRef<str>, Value)>,
     ) -> Result<Self, IrError> {
         let mut ins = NodeInoutVec::new();
-        for _ in 0..ty.num_inputs() {
-            ins.push(None);
-        }
+        ins.resize(ty.num_inputs(), None);
 
         for (k, v) in inputs {
             let idx = ty
@@ -538,9 +536,7 @@ impl Node {
         }
 
         let mut a = Vec::new();
-        for _ in 0..ty.num_attrs() {
-            a.push(Value::Null);
-        }
+        a.resize(ty.num_attrs(), Value::Null);
 
         for (k, v) in attrs {
             let idx = ty
@@ -552,11 +548,14 @@ impl Node {
             a[idx as usize] = v;
         }
 
+        let mut outputs = NodeInoutVec::new();
+        outputs.resize(ty.num_outputs(), (vec![], None));
+
         let node = Self(Rc::new(RefCell::new(NodeImpl {
             uid: NodeUID::new(),
             typ: ty.clone(),
             inputs: ins,
-            outputs: NodeInoutVec::new(),
+            outputs,
             inferred: false,
             attrs: a,
         })));
