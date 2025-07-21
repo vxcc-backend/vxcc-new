@@ -615,6 +615,16 @@ impl Node {
         }
         Ok(())
     }
+
+    /// sometimes used by vxcc_dialect_parser::cast
+    pub fn dyn_cast(&self, dialect: impl AsRef<str>, name: impl AsRef<str>) -> Option<Node> {
+        let ty = self.get_type();
+        if ty.dialect.name == dialect.as_ref() && ty.name == name.as_ref() {
+            Some(self.clone())
+        } else {
+            None
+        }
+    }
 }
 
 /// reference to a node output port

@@ -60,4 +60,9 @@ fn test_build_node() {
     assert!(t.matches(&ty!(core.Clone)).unwrap());
     // denorm and check
     assert_eq!(t.denorm().unwrap().to_string(), "arith.U8 + core.Clone");
+
+    assert!(cast!(arith.num, one.node()).is_some());
+    assert!(cast!(arith.zero, one.node()).is_none());
+    assert!(cast!(dyn arith.num, one.node()).is_some());
+    assert!(cast!(dyn arith.zero, one.node()).is_none());
 }

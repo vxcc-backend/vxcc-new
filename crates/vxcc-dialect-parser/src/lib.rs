@@ -741,13 +741,77 @@ fn mk_parser<'src>() -> impl Parser<
 ///
 /// example:
 /// ```
-/// let nd = mk!(some.Node, a: a, b: b).nd;
+/// let nd = mk!(some.Node, a: a, b: b).node();
 /// ```
 #[proc_macro]
 pub fn mk(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);
 
     let v = mk_parser()
+        .parse(Stream::from_iter(
+            input
+                .into_iter()
+                .map(|x| TokenTreeWrapper(x))
+                .collect::<Vec<_>>()
+                .into_iter(),
+        ))
+        .into_result()
+        .unwrap();
+
+    v.into()
+}
+
+fn cast_parser<'src>() -> impl Parser<
+    'src,
+    chumsky::input::Stream<std::vec::IntoIter<TokenTreeWrapper>>,
+    proc_macro2::TokenStream,
+    chumsky::extra::Err<Rich<'src, TokenTreeWrapper>>,
+> {
+    vxcc_type_parser::var_parser()
+        .then(
+            punct(',')
+                .ignore_then(
+                    any()
+                        .repeated()
+                        .collect::<TokenStreamWrapper>()
+                        .map(|x| x.0),
+                )
+                .or_not(),
+        )
+        .map(|(var, init)| match var {
+            Var::Dyn { dialect, name } => {
+                quote! {
+                    (#init).dyn_cast(#dialect, #name)
+                }
+            }
+            Var::Static { dialect, name } => {
+                let gnb = format!("DialectNodeRef__{}", name);
+                let gnb = Ident::new(gnb.as_str(), Span::call_site());
+                quote! {
+                    TryInto::<#dialect::#gnb>::try_into((#init).clone()).ok()
+                }
+            }
+        })
+}
+
+/// try cast a node to a typed node
+///
+/// example:
+/// ```
+/// let expr: &Node = ...;
+/// let nd: Option<vxcc_some_dialect::DialectNodeRef__Node> = cast!(some.Node, expr);
+/// ```
+///
+/// it can also be used to just check if a node is of a type, by using `dyn` in the node type:
+/// ```
+/// let expr: &Node = ...;
+/// let nd: Option<Node> = cast!(dyn some.Node, expr);
+/// ```
+#[proc_macro]
+pub fn cast(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = proc_macro2::TokenStream::from(input);
+
+    let v = cast_parser()
         .parse(Stream::from_iter(
             input
                 .into_iter()
