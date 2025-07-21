@@ -1,4 +1,5 @@
 use itertools::Itertools;
+pub use serde_json::Value;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -42,6 +43,8 @@ pub enum IrError {
 
     NodeInputNotFound { key: String, ctx: NoDebug<NodeType> },
 
+    NodeAttrNotFound { key: String, ctx: NoDebug<NodeType> },
+
     DoesNotImplementClone { ty: types::Type, ctx: NoDebug<Node> },
 
     DoesNotImplementDrop { ty: types::Type, ctx: NoDebug<In> },
@@ -51,6 +54,8 @@ pub enum IrError {
     ImpliesLhsIsNotLegal { lhs: types::Type },
 
     TypeError(types::TypeError),
+
+    MissingNodeInputs { ctx: NoDebug<NodeType> },
 }
 
 impl From<types::TypeError> for IrError {
@@ -79,6 +84,13 @@ impl std::fmt::Display for IrError {
             ),
             IrError::NodeInputNotFound { key, ctx } => {
                 write!(f, "the given key `{key}` does not exist in inputs of {ctx}")
+            }
+            IrError::NodeAttrNotFound { key, ctx } => write!(
+                f,
+                "the given key `{key}` does not exist in attributes of {ctx}"
+            ),
+            IrError::MissingNodeInputs { ctx } => {
+                write!(f, "missing inputs while constructing node of type `{ctx}`")
             }
             IrError::DoesNotImplementClone { ty, ctx: _ } => write!(
                 f,
@@ -161,7 +173,7 @@ impl DialectBuilder {
         DialectBuilder(r)
     }
 
-    pub fn dont_call_this__add_lateinit(&self, func: fn()) {
+    pub fn dont_call_this_add_lateinit(&self, func: fn()) {
         DialectRegistry::get().lateinit.push(func);
     }
 
@@ -220,20 +232,14 @@ impl DialectBuilder {
         Ok(())
     }
 
-    pub fn add_node_type<NS, AN, ON, AI, OI>(
+    pub fn add_node_type(
         &mut self,
-        name: NS,
+        name: impl AsRef<str>,
         infer: Box<dyn NodeOutTypeInfer + Send + Sync>,
-        args: AI,
-        outs: OI,
-    ) -> Result<NodeType, IrError>
-    where
-        NS: AsRef<str>,
-        AN: AsRef<str>,
-        ON: AsRef<str>,
-        AI: Iterator<Item = (AN, types::Type)>,
-        OI: Iterator<Item = ON>,
-    {
+        args: impl Iterator<Item = (impl AsRef<str>, types::Type)>,
+        outs: impl Iterator<Item = impl AsRef<str>>,
+        attrs: impl Iterator<Item = impl AsRef<str>>,
+    ) -> Result<NodeType, IrError> {
         let ty = NodeTypeImpl {
             runtime_uid: quid::UID::new(),
             dialect: self.0.clone(),
@@ -247,6 +253,10 @@ impl DialectBuilder {
                 .collect(),
             infer,
             name: name.as_ref().to_string(),
+            attrs_lookup: attrs
+                .enumerate()
+                .map(|(k, v)| (v.as_ref().to_string(), k as u8))
+                .collect(),
         };
         let ty = NodeType::new(ty);
 
@@ -375,6 +385,7 @@ pub struct NodeTypeImpl {
     dialect: DialectRef,
     input_lookup: HashMap<String, (NodePortVecIdx, types::Type)>,
     output_lookup: HashMap<String, NodePortVecIdx>,
+    attrs_lookup: HashMap<String, u8>,
     infer: Box<dyn NodeOutTypeInfer + Send + Sync>,
     name: String,
 }
@@ -407,6 +418,10 @@ impl NodeTypeImpl {
         self.output_lookup.len()
     }
 
+    pub fn num_attrs(&self) -> usize {
+        self.attrs_lookup.len()
+    }
+
     pub fn get_inputs(&self) -> impl Iterator<Item = &str> {
         self.input_lookup.keys().map(|x| x.as_str())
     }
@@ -415,12 +430,20 @@ impl NodeTypeImpl {
         self.output_lookup.keys().map(|x| x.as_str())
     }
 
+    pub fn get_attrs(&self) -> impl Iterator<Item = &str> {
+        self.attrs_lookup.keys().map(|x| x.as_str())
+    }
+
     pub(crate) fn _lookup_input(&self, key: &str) -> Option<NodePortVecIdx> {
         self.input_lookup.get(key).map(|x| x.0)
     }
 
     pub(crate) fn _lookup_output(&self, key: &str) -> Option<NodePortVecIdx> {
         self.output_lookup.get(key).copied()
+    }
+
+    pub(crate) fn _lookup_attr(&self, key: &str) -> Option<u8> {
+        self.attrs_lookup.get(key).copied()
     }
 
     pub(crate) fn _unlookup_input(&self, idx: NodePortVecIdx) -> Option<(&str, types::Type)> {
@@ -432,6 +455,13 @@ impl NodeTypeImpl {
 
     pub(crate) fn _unlookup_output(&self, idx: NodePortVecIdx) -> Option<&str> {
         self.output_lookup
+            .iter()
+            .find(|(_, v)| **v == idx)
+            .map(|(k, _)| k.as_str())
+    }
+
+    pub(crate) fn _unlookup_attr(&self, idx: u8) -> Option<&str> {
+        self.attrs_lookup
             .iter()
             .find(|(_, v)| **v == idx)
             .map(|(k, _)| k.as_str())
@@ -467,6 +497,7 @@ pub struct NodeImpl {
     inputs: NodeInoutVec<Option<Out>>,
     outputs: NodeInoutVec<(Vec<In>, Option<types::Type>)>,
     inferred: bool,
+    attrs: Vec<Value>,
 }
 
 /// clone only clones the node ref
@@ -480,11 +511,11 @@ impl PartialEq for Node {
 }
 
 impl Node {
-    pub fn new<I, S>(ty: &NodeType, inputs: I) -> Result<Self, IrError>
-    where
-        I: Iterator<Item = (S, Out)>,
-        S: AsRef<str>,
-    {
+    pub fn new(
+        ty: &NodeType,
+        inputs: impl Iterator<Item = (impl AsRef<str>, Out)>,
+        attrs: impl Iterator<Item = (impl AsRef<str>, Value)>,
+    ) -> Result<Self, IrError> {
         let mut ins = NodeInoutVec::new();
         for _ in 0..ty.num_inputs() {
             ins.push(None);
@@ -500,13 +531,39 @@ impl Node {
             ins[idx as usize] = Some(v);
         }
 
-        Ok(Self(Rc::new(RefCell::new(NodeImpl {
+        if !ins.iter().all(|x| x.is_some()) {
+            Err(IrError::MissingNodeInputs {
+                ctx: NoDebug(ty.clone()),
+            })?
+        }
+
+        let mut a = Vec::new();
+        for _ in 0..ty.num_attrs() {
+            a.push(Value::Null);
+        }
+
+        for (k, v) in attrs {
+            let idx = ty
+                ._lookup_attr(k.as_ref())
+                .ok_or(IrError::NodeAttrNotFound {
+                    key: k.as_ref().to_string(),
+                    ctx: NoDebug(ty.clone()),
+                })?;
+            a[idx as usize] = v;
+        }
+
+        let node = Self(Rc::new(RefCell::new(NodeImpl {
             uid: NodeUID::new(),
             typ: ty.clone(),
             inputs: ins,
             outputs: NodeInoutVec::new(),
             inferred: false,
-        }))))
+            attrs: a,
+        })));
+
+        node.ensure_inferred()?;
+
+        Ok(node)
     }
 
     pub fn get_uid(&self) -> NodeUID {
@@ -533,6 +590,14 @@ impl Node {
             .typ
             ._lookup_input(name)
             .map(|x| unsafe { In::new(self.clone(), x) })
+    }
+
+    pub fn attr(&self, name: &str) -> Option<Value> {
+        self.0
+            .borrow()
+            .typ
+            ._lookup_attr(name)
+            .map(|x| self.0.borrow().attrs[x as usize].clone())
     }
 
     fn ensure_inferred(&self) -> Result<(), IrError> {

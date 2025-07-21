@@ -53,6 +53,7 @@ fn dialect_parser<'src>() -> impl Parser<
             name: String,
             inputs: Vec<(String, TokenStream)>,
             outputs: Vec<(String, Option<TokenStream>)>,
+            attrs: Vec<String>,
             infer_func: Option<Ident>,
         },
     }
@@ -95,18 +96,27 @@ fn dialect_parser<'src>() -> impl Parser<
                 .collect::<Vec<(String, Option<TokenStream>)>>(),
         )
         .then(
+            exact_ident("attrs")
+                .ignore_then(ident().separated_by(punct(',')).collect::<Vec<String>>())
+                .or_not()
+                .map(|x| x.unwrap_or(vec![])),
+        )
+        .then(
             exact_ident("infer")
                 .ignore_then(punct('#'))
                 .ignore_then(ident())
                 .map(|x| Ident::new(x.as_str(), Span::call_site()))
                 .or_not(),
         )
-        .map(|(((name, inputs), outputs), infer_func)| MemberSpec::Node {
-            name,
-            inputs,
-            outputs,
-            infer_func,
-        });
+        .map(
+            |((((name, inputs), outputs), attrs), infer_func)| MemberSpec::Node {
+                name,
+                inputs,
+                outputs,
+                attrs,
+                infer_func,
+            },
+        );
 
     let member_spec = choice((type_implies, type_decl, node_decl));
 
@@ -144,7 +154,7 @@ fn dialect_parser<'src>() -> impl Parser<
             let members_typestruct = members
                 .iter()
                 .flat_map(|spec| match spec {
-                    MemberSpec::Node { name, inputs, outputs, infer_func } => {
+                    MemberSpec::Node { name, inputs, outputs, attrs, infer_func } => {
                         let name_id = Ident::new(name.as_str(), Span::call_site());
 
                         let gn = format!("DialectNode__{}", name);
@@ -168,6 +178,15 @@ fn dialect_parser<'src>() -> impl Parser<
                             })
                             .collect::<TokenStream>();
 
+                        let gn_attrs = attrs
+                            .iter()
+                            .flat_map(|k| {
+                                let kn = format!("attr__{}", k);
+                                let kn = Ident::new(kn.as_str(), Span::call_site());
+                                quote! { pub #kn: u8, }
+                            })
+                            .collect::<TokenStream>();
+
                         builders = quote! {
                             #builders
 
@@ -175,6 +194,7 @@ fn dialect_parser<'src>() -> impl Parser<
                                 pub ty: ::vxcc_ir::NodeType,
                                 #gn_ins
                                 #gn_outs
+                                #gn_attrs
                             }
                         };
 
@@ -186,6 +206,14 @@ fn dialect_parser<'src>() -> impl Parser<
                             .flat_map(|(k,_)| {
                                 let kn = Ident::new(k.as_str(), Span::call_site());
                                 quote! { pub #kn: ::vxcc_ir::Out, }
+                            })
+                            .collect::<TokenStream>();
+
+                        let gnb_attrs = attrs
+                            .iter()
+                            .flat_map(|k| {
+                                let kn = Ident::new(format!("attr__{}", k).as_str(), Span::call_site());
+                                quote! { pub #kn: ::vxcc_ir::Value, }
                             })
                             .collect::<TokenStream>();
 
@@ -208,16 +236,35 @@ fn dialect_parser<'src>() -> impl Parser<
                             }
                         };
 
+                        let gnb_new_attrs_iter = if attrs.len() == 0 {
+                            quote! { ::std::iter::empty::<(&'static str, ::vxcc_ir::Value)>() }
+                        } else {
+                            let a = attrs
+                                .iter()
+                                .flat_map(|k| {
+                                    let kn = Ident::new(format!("attr__{}", k).as_str(), Span::call_site());
+                                    quote! { (#k,self.#kn), }
+                                })
+                                .collect::<TokenStream>();
+
+                            quote! {
+                                [#a].into_iter();
+                            }
+                        };
+
                         builders = quote! {
                             #builders
 
                             pub struct #gnb {
                                 #gnb_ins
+                                #gnb_attrs
                             }
 
                             impl #gnb {
                                 pub fn build(self) -> Result<#gna, ::vxcc_ir::IrError> {
-                                    let nd = ::vxcc_ir::Node::new(&DIALECT.nodes.#name_id.ty.clone(), #gnb_new_ins_iter)?;
+                                    let ins = #gnb_new_ins_iter;
+                                    let attrs = #gnb_new_attrs_iter;
+                                    let nd = ::vxcc_ir::Node::new(&DIALECT.nodes.#name_id.ty.clone(), ins, attrs)?;
                                     Ok(#gna { nd })
                                 }
                             }
@@ -253,6 +300,19 @@ fn dialect_parser<'src>() -> impl Parser<
                             })
                             .collect::<TokenStream>();
 
+                        let gna_attrs = attrs.iter()
+                            .flat_map(|name| {
+                                let argid = format!("attr__{}", name);
+                                let argid = Ident::new(argid.as_str(), Span::call_site());
+
+                                quote! {
+                                    pub fn #argid(&self) -> ::vxcc_ir::Value {
+                                        self.node().attr(#name).unwrap()
+                                    }
+                                }
+                            })
+                            .collect::<TokenStream>();
+
                         builders = quote! {
                             #builders
 
@@ -267,6 +327,7 @@ fn dialect_parser<'src>() -> impl Parser<
 
                                 #gna_ins
                                 #gna_outs
+                                #gna_attrs
                             }
 
                             impl TryFrom<::vxcc_ir::Node> for #gna {
@@ -308,6 +369,15 @@ fn dialect_parser<'src>() -> impl Parser<
                             quote! { [#i].into_iter() }
                         };
 
+                        let init_attrs = if attrs.len() == 0 {
+                            quote! { ::std::iter::empty::<&'static str>() }
+                        } else {
+                            let i = attrs.iter()
+                                .flat_map(|k| quote! { #k, })
+                                .collect::<TokenStream>();
+                            quote! { [#i].into_iter() }
+                        };
+
                         let gn_infer = format!("DialectNodeInfer__{}", name);
                         let gn_infer = Ident::new(gn_infer.as_str(), Span::call_site());
 
@@ -316,7 +386,8 @@ fn dialect_parser<'src>() -> impl Parser<
                             let #nd_name_id = builder.add_node_type(#name,
                                                                         Box::new(#gn_infer {}),
                                                                         #init_ins,
-                                                                        #init_outs).unwrap();
+                                                                        #init_outs,
+                                                                        #init_attrs).unwrap();
                         };
 
                         let initstruct_ins = inputs.iter()
@@ -339,12 +410,23 @@ fn dialect_parser<'src>() -> impl Parser<
                             })
                             .collect::<TokenStream>();
 
+                        let initstruct_attrs = attrs.iter()
+                            .enumerate()
+                            .flat_map(|(idx, name)| {
+                                let idx = idx as u8;
+                                let argid = format!("attr__{}", name);
+                                let argid = Ident::new(argid.as_str(), Span::call_site());
+                                quote! { #argid: #idx, }
+                            })
+                            .collect::<TokenStream>();
+
                         nodes_init_struct = quote! {
                             #nodes_init_struct
                             #name_id: #gn {
                                 ty: #nd_name_id,
                                 #initstruct_ins
                                 #initstruct_outs
+                                #initstruct_attrs
                             },
                         };
 
@@ -564,7 +646,7 @@ fn dialect_parser<'src>() -> impl Parser<
                     use super::*;
 
                     let mut builder = ::vxcc_ir::DialectBuilder::new(#n);
-                    builder.dont_call_this__add_lateinit(lateinit);
+                    builder.dont_call_this_add_lateinit(lateinit);
 
                     #types_init_builder
 
@@ -641,7 +723,7 @@ fn mk_parser<'src>() -> impl Parser<
             });
 
             match var {
-                Var::Dyn { dialect, name } => {
+                Var::Dyn { .. } => {
                     panic!("`mk!()` with dyn node type not yet implemented")
                 }
                 Var::Static { dialect, name } => {

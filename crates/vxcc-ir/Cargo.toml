@@ -13,3 +13,4 @@ quid = { version = "^0.1.2", default-features = false, features = ["fmt", "std",
 
 quote = { version = "1.0.40", optional = true }
 proc-macro2 = { version = "1.0.95", optional = true }
+serde_json = "1.0.141"
