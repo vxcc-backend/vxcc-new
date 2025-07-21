@@ -215,6 +215,7 @@ dependencies = [
  "quote",
  "vxcc-ir",
  "vxcc-type-parser",
+ "vxcc-type-parser-proc",
 ]
 
 [[package]]

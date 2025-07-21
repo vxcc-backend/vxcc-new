@@ -1,5 +1,6 @@
 use vxcc_dialect_parser::*;
-use vxcc_ir::vxcc_core_dialect;
+use vxcc_ir::{Value, vxcc_core_dialect};
+use vxcc_type_parser_proc::ty;
 
 dialect! {
     dialect arith:
@@ -48,6 +49,15 @@ dialect! {
 #[test]
 fn test_build_node() {
     let zero = mk!(arith.zero).unwrap();
-    let add = mk!(arith.add, a: zero.#res, b: zero.#res).unwrap();
+    let one = mk!(arith.num, attr__num: Value::Number(1.into())).unwrap();
+    let add = mk!(arith.add, a: zero.#res, b: one.#res).unwrap();
     let _sink = mk!(arith.sink, a: add.#res);
+
+    // test if type implies work
+    let res = one.out__res();
+    let t = res.get_type().unwrap();
+    // ty not yet denormed. match should denorm into new Type
+    assert!(t.matches(&ty!(core.Clone)).unwrap());
+    // denorm and check
+    assert_eq!(t.denorm().unwrap().to_string(), "arith.U8 + core.Clone");
 }
