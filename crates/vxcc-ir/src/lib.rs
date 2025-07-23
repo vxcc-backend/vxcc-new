@@ -27,7 +27,7 @@ impl<T> std::fmt::Debug for NoDebug<T> {
 
 impl<T: std::fmt::Display> std::fmt::Display for NoDebug<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
+        write!(f, "{}", self.0)
     }
 }
 

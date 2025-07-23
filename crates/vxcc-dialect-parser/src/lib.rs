@@ -156,9 +156,13 @@ fn dialect_parser<'src>() -> impl Parser<
             let mut members_nodestruct = TokenStream::new();
 
             let members_typestruct = members
-                .iter()
+                .into_iter()
                 .flat_map(|spec| match spec {
                     MemberSpec::Node { name, ty, inputs, outputs, attrs, infer_func } => {
+                        let mut outputs = outputs;
+                        outputs.push(("_attach".to_string(), Some(quote! { ::vxcc_ir::types::Type::var(&vxcc_core_dialect::DIALECT.types.Attach) })));
+                        let outputs = outputs;
+
                         let name_id = Ident::new(name.as_str(), Span::call_site());
 
                         let gn = format!("DialectNode__{}", name);
@@ -434,30 +438,30 @@ fn dialect_parser<'src>() -> impl Parser<
                             },
                         };
 
-                        let infer_func_impl = match infer_func {
-                            Some(func) => {
-                                if outputs.iter().any(|(_,x)| x.is_some()) {
-                                    panic!("automatic type inference in combination with manual inference function is currently not supported");
-                                }
-                                quote! { #func(node, out) }
-                            }
-                            None => {
-                                let type_infers = outputs.iter()
-                                    .map(|(name,ty)| {
-                                        let ty = ty.as_ref().expect("no output type set. either set a output type, or use a manual inference function");
-                                        quote! {
-                                            out.set_name(#name, #ty)?;
-                                        }
-                                    })
-                                    .collect::<proc_macro2::TokenStream>();
+                        let mut type_infers = outputs.iter()
+                            .filter_map(|(name,ty)| {
+                                let ty = match (ty.as_ref(), &infer_func) {
+                                    (Some(x), _) => Some(x),
+                                    (None, None) => panic!("no output type set. either set a output type, or use a manual inference function"),
+                                    (None, Some(_)) => None,
+                                };
 
-                                quote! {
-                                    use super::#nmod as vxcc___dialect;
-                                    use super::*;
-                                    #type_infers
-                                    Ok(())
-                                }
-                            }
+                                ty.map(|ty| quote! { out.set_name(#name, #ty)?; })
+                            })
+                            .collect::<proc_macro2::TokenStream>();
+
+                        if let Some(func) = infer_func {
+                            type_infers = quote! {
+                                #type_infers
+                                #func(node, out)
+                            };
+                        };
+
+                        let infer_func_impl = quote! {
+                            use super::#nmod as vxcc___dialect;
+                            use super::*;
+                            #type_infers
+                            Ok(())
                         };
 
                         builders = quote! {
@@ -670,6 +674,50 @@ fn dialect_parser<'src>() -> impl Parser<
         })
 }
 
+/// create a vxcc dialect
+///
+/// example:
+/// ```
+/// fn my_infer_func(node: vxcc_ir::Node, out: &mut vxcc_ir::NodeOutTypeInferRes) -> Result<(), vxcc_ir::IrError> {
+///    ...
+/// }
+///
+/// dialect! {
+///     dialect arith:
+///         core
+///         ;
+///
+///     type U8;
+///     type U8 => core.Clone;
+///
+///     type Vec { elt };
+///
+///     type Iter { elt };
+///
+///     type Vec { elt: ?e } => Iter { elt: ?elt };
+///
+///     type Op;
+///
+///     node add
+///         type Op
+///         ins
+///             a: U8,
+///             b: U8
+///         outs
+///             res: U8
+///         ;
+///
+///     node other
+///         type Op
+///         ins
+///         outs
+///             res: U8
+///         attrs
+///             attr1, attr2
+///         infer #my_infer_func
+///         ;
+/// }
+/// ```
 #[proc_macro]
 pub fn dialect(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);

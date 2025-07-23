@@ -1,9 +1,10 @@
-use crate::*;
+use crate::{types::Type, *};
 
 #[allow(non_snake_case)]
 pub struct CoreTypes {
     pub Clone: types::TypeVar,
     pub Drop: types::TypeVar,
+    pub Attach: types::TypeVar,
 }
 
 pub struct CoreDialect {
@@ -17,11 +18,24 @@ fn create() -> CoreDialect {
 
     let Clone = builder.add_type("Clone");
     let Drop = builder.add_type("Drop");
+    let Attach = builder.add_type("Attach");
+
+    builder
+        .add_implies(Type::var(&Attach), Type::var(&Clone))
+        .unwrap();
+
+    builder
+        .add_implies(Type::var(&Attach), Type::var(&Drop))
+        .unwrap();
 
     let own = builder.build();
     CoreDialect {
         dialect: own.get_dialect(),
-        types: CoreTypes { Clone, Drop },
+        types: CoreTypes {
+            Clone,
+            Drop,
+            Attach,
+        },
     }
 }
 

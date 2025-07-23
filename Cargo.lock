@@ -206,6 +206,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
 
 [[package]]
+name = "vxcc-base-dialect"
+version = "0.1.0"
+dependencies = [
+ "vxcc-dialect-parser",
+ "vxcc-ir",
+ "vxcc-type-parser-proc",
+]
+
+[[package]]
 name = "vxcc-dialect-parser"
 version = "0.1.0"
 dependencies = [
