@@ -49,6 +49,14 @@ dialect! {
         attrs
             merger  // string of what merged the locs. can be Null
         ;
+
+    node loc
+        type ?a
+        ins
+            att: core.Attach,
+            loc: Loc
+        outs
+        ;
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use itertools::Itertools;
 pub use serde_json::Value;
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     rc::Rc,
     sync::{Arc, LazyLock, Mutex},
 };
@@ -355,7 +355,7 @@ pub struct NodeOutTypeInferRes {
     node: Node,
 }
 
-// TODO: also safer put
+// TODO: also safer set_name
 impl NodeOutTypeInferRes {
     fn new(node: &Node) -> Self {
         Self { node: node.clone() }
@@ -580,6 +580,26 @@ impl Node {
         self.0.borrow().typ.clone()
     }
 
+    pub fn ports_out(&self) -> Vec<Out> {
+        self.0
+            .borrow()
+            .outputs
+            .iter()
+            .enumerate()
+            .map(|(i, _)| unsafe { Out::new(self.clone(), i as u8) })
+            .collect()
+    }
+
+    pub fn ports_in(&self) -> Vec<In> {
+        self.0
+            .borrow()
+            .inputs
+            .iter()
+            .enumerate()
+            .map(|(i, _)| unsafe { In::new(self.clone(), i as u8) })
+            .collect()
+    }
+
     /// reference to a output port
     pub fn port_out(&self, name: &str) -> Option<Out> {
         self.0
@@ -666,6 +686,10 @@ impl Out {
             ._unlookup_output(self.idx)
             .unwrap()
             .to_string()
+    }
+
+    pub fn get_index(&self) -> usize {
+        self.idx as usize
     }
 
     pub fn get_node(&self) -> Node {
@@ -803,6 +827,10 @@ impl In {
             .to_string()
     }
 
+    pub fn get_index(&self) -> usize {
+        self.idx as usize
+    }
+
     pub fn get_type(&self) -> types::Type {
         self.get_node()
             .get_type()
@@ -861,4 +889,47 @@ impl In {
                 .clone()
         }
     }
+}
+
+pub fn dump(node: Node) -> String {
+    fn visit(node: Node, next: &mut u32, visited: &mut BTreeMap<NodeUID, Vec<u32>>) -> String {
+        let mut out = String::new();
+        let ins = node.ports_in();
+        for inp in &ins {
+            out += visit(inp.get_node(), next, visited).as_str();
+        }
+        let outs = node.ports_out();
+        let out_ids: Vec<_> = outs
+            .iter()
+            .map(|_| {
+                let v = *next;
+                *next += 1;
+                v
+            })
+            .collect();
+        out += &out_ids.iter().map(|x| format!("%{x}")).join(", ");
+        out += " = ";
+        out += node.get_type().dialect.get_name();
+        out += ".";
+        out += node.get_type().get_name();
+        if ins.len() > 0 {
+            out += " ";
+            out += &ins
+                .iter()
+                .map(|x| {
+                    let id = visited.get(&x.get_node().get_uid()).unwrap()[x.get_index()];
+                    format!("%{id}")
+                })
+                .join(", ");
+        };
+        out += ";\n";
+
+        visited.insert(node.get_uid(), out_ids);
+
+        out
+    }
+
+    let mut visited = BTreeMap::<NodeUID, Vec<u32>>::new();
+    let mut next = 0;
+    visit(node, &mut next, &mut visited)
 }

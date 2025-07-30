@@ -600,8 +600,6 @@ impl Type {
         Self::and([self.clone(), b.clone()].into_iter())
     }
 
-    // TODO: instead require type arguments to be registered!
-
     /// can be used for named type arguments, and structs
     ///
     /// if there are no arguments, this panics!
