@@ -102,6 +102,14 @@ pub fn type_parser<'src>(
             quote! { ::vxcc_ir::types::Type::from(#v) }
         });
 
+        let lit = literal()
+            .try_map(|x, s| {
+                x.parse::<u32>()
+                    .map_err(|_| Rich::custom(s, "expected number"))
+            })
+            .labelled("number")
+            .map(|v| quote! { ::vxcc_ir::types::Type::lit(#v) });
+
         let any = punct('?').map(|_| quote! { ::vxcc_ir::types::Type::any() });
 
         let unspec = punct('?')
@@ -149,7 +157,7 @@ pub fn type_parser<'src>(
         let var_ty = var.map(|x| quote! { ::vxcc_ir::types::Type::var(&#x) });
 
         let atom: Boxed<'_, '_, _, proc_macro2::TokenStream, chumsky::extra::Err<Rich<'src, _>>> =
-            choice((ground, var_ty, qt, unspec, any)).boxed();
+            choice((ground, var_ty, qt, unspec, any, lit)).boxed();
 
         let o: Boxed<'_, '_, _, proc_macro2::TokenStream, chumsky::extra::Err<Rich<'src, _>>> =
             atom.clone()

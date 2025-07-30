@@ -222,7 +222,8 @@ impl std::fmt::Display for TypeAnd {
                 | TypeImpl::Var(_)
                 | TypeImpl::Unspec(_)
                 | TypeImpl::Custom(_)
-                | TypeImpl::Ground(_) => write!(f, "{}", x)?,
+                | TypeImpl::Ground(_)
+                | TypeImpl::Literal(_) => write!(f, "{}", x)?,
 
                 TypeImpl::And(_) => write!(f, "({})", x)?,
             }
@@ -245,7 +246,7 @@ impl TypeAnd {
             match &*item.0 {
                 TypeImpl::Any => {}
 
-                TypeImpl::Unspec(_) => {
+                TypeImpl::Literal(_) | TypeImpl::Unspec(_) => {
                     if !conjugate.contains(&item) {
                         conjugate.push(item);
                     }
@@ -403,10 +404,11 @@ impl std::fmt::Display for TypeNumList {
 
 /// you shouldn't manually create these. Use the constructors from Type
 #[derive(Eq, PartialEq, Hash)]
-#[non_exhaustive]
 pub enum TypeImpl {
     Any,
     Var(TypeVar),
+
+    Literal(u32),
 
     /// nested TypeImpl::And is not allowed!
     And(TypeAnd),
@@ -422,6 +424,7 @@ impl std::fmt::Display for TypeImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TypeImpl::Any => write!(f, "?"),
+            TypeImpl::Literal(x) => write!(f, "{}", x),
             TypeImpl::Var(inner) => write!(f, "{}", inner),
             TypeImpl::And(inner) => write!(f, "{}", inner),
             TypeImpl::Ground(inner) => write!(f, "{}", inner),
@@ -441,6 +444,10 @@ impl TryQuote for Type {
 
         Ok(match &*self.0 {
             TypeImpl::Any => quote! { vxcc_ir::types::Type::any() },
+
+            TypeImpl::Literal(x) => {
+                quote! { vxcc_ir::types::Type::lit(#x) }
+            }
 
             TypeImpl::Var(type_var_impl) => {
                 let name = type_var_impl.as_ref();
@@ -578,6 +585,10 @@ impl Type {
 
     pub fn custom(c: CustomType) -> Self {
         Self::from(TypeImpl::Custom(c))
+    }
+
+    pub fn lit(x: u32) -> Self {
+        Self::from(TypeImpl::Literal(x))
     }
 
     pub fn any() -> Self {
@@ -718,7 +729,8 @@ impl Type {
                     TypeImpl::Any
                     | TypeImpl::Var(_)
                     | TypeImpl::Unspec(_)
-                    | TypeImpl::Custom(_) => (),
+                    | TypeImpl::Custom(_)
+                    | TypeImpl::Literal(_) => (),
 
                     TypeImpl::And(_) => unreachable!(),
 
@@ -809,6 +821,7 @@ impl Type {
     pub(crate) fn to_var_list(&self) -> Vec<TypeVar> {
         match &*self.0 {
             TypeImpl::Any => vec![],
+            TypeImpl::Literal(_) => vec![],
             TypeImpl::Var(v) => vec![v.clone()],
             TypeImpl::Custom(_) => vec![],
             TypeImpl::Unspec(_) => vec![],
@@ -823,7 +836,7 @@ impl Type {
     pub fn approx_expressiveness(&self) -> usize {
         match &*self.0 {
             TypeImpl::Any => 0,
-            TypeImpl::Var(_) => 1,
+            TypeImpl::Literal(_) | TypeImpl::Var(_) => 1,
             TypeImpl::Custom(_) => 2,
             TypeImpl::Unspec(_) => 2,
             TypeImpl::And(and) => and.get_all().map(|x| x.approx_expressiveness()).sum(),
@@ -861,6 +874,12 @@ impl Type {
         }
 
         match &*other.0 {
+            TypeImpl::Literal(x) => match &*self.0 {
+                TypeImpl::Var(v) => v == &vxcc_core_dialect::DIALECT.types.Lit,
+                TypeImpl::Literal(y) => x == y,
+                _ => false,
+            },
+
             TypeImpl::Any => true,
 
             TypeImpl::Unspec(u) => {
@@ -868,11 +887,22 @@ impl Type {
                 true
             }
 
-            TypeImpl::Var(var) => match &*self.0 {
-                TypeImpl::Var(x) => *var == *x,
-                TypeImpl::And(x) => x.get_all().any(|x| x.fast_matches(other, out)),
-                _ => false,
-            },
+            TypeImpl::Var(var) => {
+                if var == &vxcc_core_dialect::DIALECT.types.Lit
+                    && match &*self.0 {
+                        TypeImpl::Literal(_) => true,
+                        _ => false,
+                    }
+                {
+                    true
+                } else {
+                    match &*self.0 {
+                        TypeImpl::Var(x) => *var == *x,
+                        TypeImpl::And(x) => x.get_all().any(|x| x.fast_matches(other, out)),
+                        _ => false,
+                    }
+                }
+            }
 
             TypeImpl::And(and) => {
                 if and.get_all().all(|x| match &*x.0 {

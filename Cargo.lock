@@ -239,6 +239,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vxcc-num-dialect"
+version = "0.1.0"
+dependencies = [
+ "vxcc-dialect-parser",
+ "vxcc-ir",
+ "vxcc-type-parser-proc",
+]
+
+[[package]]
 name = "vxcc-type-parser"
 version = "0.1.0"
 dependencies = [

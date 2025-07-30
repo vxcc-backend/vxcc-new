@@ -5,4 +5,4 @@ members = [
     "crates/vxcc-type-parser",
     "crates/vxcc-type-parser-proc",
     "crates/vxcc-dialect-parser"
-, "crates/vxcc-base-dialect"]
+, "crates/vxcc-base-dialect", "crates/vxcc-num-dialect"]

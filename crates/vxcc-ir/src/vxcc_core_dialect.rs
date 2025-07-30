@@ -5,6 +5,7 @@ pub struct CoreTypes {
     pub Clone: types::TypeVar,
     pub Drop: types::TypeVar,
     pub Attach: types::TypeVar,
+    pub Lit: types::TypeVar,
 }
 
 pub struct CoreDialect {
@@ -19,6 +20,7 @@ fn create() -> CoreDialect {
     let Clone = builder.add_type("Clone");
     let Drop = builder.add_type("Drop");
     let Attach = builder.add_type("Attach");
+    let Lit = builder.add_type("Lit");
 
     builder
         .add_implies(Type::var(&Attach), Type::var(&Clone))
@@ -35,6 +37,7 @@ fn create() -> CoreDialect {
             Clone,
             Drop,
             Attach,
+            Lit,
         },
     }
 }

@@ -1,0 +1,9 @@
+[package]
+name = "vxcc-num-dialect"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+vxcc-ir = { path = "../vxcc-ir/" }
+vxcc-type-parser-proc = { path = "../vxcc-type-parser-proc/" }
+vxcc-dialect-parser = { path = "../vxcc-dialect-parser/" }
